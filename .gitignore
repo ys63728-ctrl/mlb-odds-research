@@ -1,0 +1,30 @@
+# 秘密情報（絶対にコミットしない）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# データベース・データ
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# ログ
+*.log
+logs/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# テスト
+.pytest_cache/
+.coverage
+htmlcov/

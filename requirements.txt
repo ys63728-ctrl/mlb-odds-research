@@ -1,0 +1,7 @@
+# このプロジェクトが必要とするライブラリ（バージョン固定）
+# インストール: pip install -r requirements.txt
+
+discord.py==2.7.1      # Discord BOT 本体
+SQLAlchemy==2.0.50     # データベース(ORM)
+python-dotenv==1.2.2   # .env から秘密情報を読み込む
+requests==2.34.2       # The Odds API への HTTP リクエスト
