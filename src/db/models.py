@@ -54,6 +54,8 @@ class BaseOdds(Base):
     team: Mapped[str] = mapped_column(String(80))
     base_odds_decimal: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     commence_time: Mapped[datetime] = mapped_column(DateTime)
+    # ハンデ(spreads)監視用のライン値。h2h(1×2)基準のときは None。
+    point: Mapped[Decimal | None] = mapped_column(Numeric(4, 1), nullable=True)
 
 
 class GameResult(Base):

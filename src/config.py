@@ -60,14 +60,24 @@ SPORTS = [
     {
         "sport_key": "baseball_mlb",
         "label": "⚾MLB",
+        "emoji": "⚾",
         "window": WINDOW_FIXED_CLOCK,
     },
     {
         "sport_key": "baseball_npb",
         "label": "⚾NPB",
+        "emoji": "⚾",
         "window": WINDOW_PREGAME,
         "lead_minutes": NPB_LEAD_MINUTES,
         "cutoff_minutes": NPB_CUTOFF_MINUTES,
+    },
+    {
+        # サッカーW杯。MLBと同じ固定時刻方式（21:00基準〜23:59まで監視）。
+        # 結果は ホーム / アウェイ / Draw(引き分け) の3つ。引き分けオッズも監視対象。
+        "sport_key": "soccer_fifa_world_cup",
+        "label": "⚽W杯",
+        "emoji": "⚽",
+        "window": WINDOW_FIXED_CLOCK,
     },
 ]
 
@@ -151,8 +161,9 @@ LEVEL_THRESHOLDS = [
 # Steam Move 検知の閾値
 # =====================================================================
 STEAM_THRESHOLD = 0.05   # 基準からの絶対変動がこの値以上で「動いた」と判定
-STEAM_MIN_BOOKS = 2      # 同方向に動いてるブックがこの数以上で Steam 通知
+STEAM_MIN_BOOKS = 3      # 同方向に動いてるブックがこの数以上で Steam 通知
 STEAM_SAME_DIRECTION_ONLY = True  # 同方向に動いている時だけカウントする
+STEAM_MAX_ODDS = 2.1     # この倍率以下のサイドだけを Steam の対象にする（片側だけ見れば十分なため）
 
 
 # =====================================================================

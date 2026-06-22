@@ -8,6 +8,7 @@ The Odds API の窓口。
 import requests
 
 from src import config
+from src.utils.time_utils import parse_commence_time, is_within_24h
 
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
@@ -64,3 +65,96 @@ def get_current_games(
         return []
 
     return data
+
+
+def get_events(sport_key: str | None = None) -> list[dict]:
+    """
+    指定スポーツの試合一覧（スケジュール）を取得する。
+    /events はクレジットを消費しない。各要素に id / commence_time / 両チーム名を含む。
+    通信失敗時は空リスト。
+    """
+    sport = sport_key or config.SPORT_KEY
+    url = f"{ODDS_API_BASE}/sports/{sport}/events/"
+    try:
+        response = requests.get(url, params={"apiKey": config.ODDS_API_KEY}, timeout=15)
+    except Exception as e:
+        print(f"[odds_api] events 通信エラー: {e}")
+        return []
+    if response.status_code != 200:
+        print(f"[odds_api] events APIエラー: {response.status_code} {response.text[:200]}")
+        return []
+    try:
+        data = response.json()
+    except Exception as e:
+        print(f"[odds_api] events JSON解釈エラー: {e}")
+        return []
+    return data if isinstance(data, list) else []
+
+
+def get_games_with_handicap(
+    sport_key: str | None = None,
+    regions: str | None = None,
+    markets: str = "alternate_spreads",
+) -> list[dict]:
+    """
+    24時間以内に始まる各試合について、ハンデの全ライン（階段）を取得する。
+
+    一括の /odds では主要ライン1本しか返らないため、試合ごとの専用エンドポイント
+    (/events/{id}/odds) を markets=alternate_spreads で叩いて全ハンデを取る。
+    各 events/{id}/odds 呼び出しは [地域数] クレジットを消費する。
+
+    返り値:
+        get_current_games と同じ形（試合 dict の list）。各 dict の bookmakers→
+        markets(key='alternate_spreads')→outcomes は name/price/point を持つ。
+        24時間以内に始まる試合のみが対象（監視対象と同じ範囲）。
+    """
+    sport = sport_key or config.SPORT_KEY
+    reg = regions or config.ODDS_REGIONS
+
+    events = get_events(sport)
+    games: list[dict] = []
+    last_remaining = None
+    fetched = 0
+
+    for ev in events:
+        commence_str = ev.get("commence_time")
+        if not commence_str:
+            continue
+        try:
+            commence = parse_commence_time(commence_str)
+        except Exception:
+            continue
+        if not is_within_24h(commence):
+            continue  # 監視対象（24時間以内）の試合だけ階段を取りに行く
+
+        eid = ev.get("id")
+        if not eid:
+            continue
+        url = f"{ODDS_API_BASE}/sports/{sport}/events/{eid}/odds/"
+        params = {
+            "apiKey": config.ODDS_API_KEY,
+            "regions": reg,
+            "markets": markets,
+            "oddsFormat": config.ODDS_FORMAT,
+        }
+        try:
+            r = requests.get(url, params=params, timeout=15)
+        except Exception as e:
+            print(f"[odds_api] handicap 通信エラー ({eid}): {e}")
+            continue
+
+        last_remaining = r.headers.get("x-requests-remaining") or last_remaining
+        if r.status_code != 200:
+            print(f"[odds_api] handicap APIエラー {r.status_code}: {r.text[:150]}")
+            continue
+        try:
+            data = r.json()
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("bookmakers"):
+            games.append(data)
+            fetched += 1
+
+    if last_remaining is not None:
+        print(f"[odds_api] handicap {fetched}試合取得 / 残り: {last_remaining}")
+    return games

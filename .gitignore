@@ -18,11 +18,12 @@ data/*.sqlite3
 *.log
 logs/
 
-# OS / エディタ
+# OS / エディタ / ツール
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
+.claude/
 
 # テスト
 .pytest_cache/

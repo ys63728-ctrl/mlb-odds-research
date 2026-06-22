@@ -145,34 +145,66 @@ def test_non_pinnacle_book_does_not_trigger_pinnacle_alert(session):
 # =====================================================================
 # B. Steam Move
 # =====================================================================
-def test_steam_fires_when_two_books_move_same_direction(session):
-    """Pinnacle と BetOnline が両方ヤンキース側に下落 → Steam(down) 発火"""
-    # base=2.50 (Red Sox +150)、現在=2.40 (移動 -0.10) を2ブックで
-    # → Red Sox 側で down 方向に2ブック揃う
-    # american +140 → decimal 2.40
+def test_steam_fires_when_three_books_move_same_direction(session):
+    """3ブックが同方向に下落（2.1倍以下）→ Steam(down) 発火"""
+    # Red Sox 基準2.00 → 現在1.90（-0.10, 2.1倍以下）を3ブックで
+    # american -111 → decimal 1.90
     games = [_game_with_books([
-        ("Pinnacle",      [("Yankees", -200), ("Red Sox", 140)]),
-        ("BetOnline.ag",  [("Yankees", -195), ("Red Sox", 140)]),
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", -111)]),
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", -111)]),
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", -111)]),
     ])]
     base_map = {
-        ("g1", "Pinnacle",     "Yankees"): 1.67,
-        ("g1", "Pinnacle",     "Red Sox"): 2.50,
-        ("g1", "BetOnline.ag", "Yankees"): 1.67,
-        ("g1", "BetOnline.ag", "Red Sox"): 2.50,
+        ("g1", "Pinnacle",     "Red Sox"): 2.00,
+        ("g1", "BetOnline.ag", "Red Sox"): 2.00,
+        ("g1", "LowVig.ag",    "Red Sox"): 2.00,
+        ("g1", "Pinnacle",     "Yankees"): 1.50,
+        ("g1", "BetOnline.ag", "Yankees"): 1.50,
+        ("g1", "LowVig.ag",    "Yankees"): 1.50,
     }
     state = MonitorState()
     events = evaluate(session, games, base_map, state, alert_time=ALERT_TIME)
     session.commit()
 
-    steam = [e for e in events if e.kind == "steam_move"]
-    assert len(steam) >= 1
-    rs_steam = [e for e in steam if e.team == "Red Sox"]
+    rs_steam = [e for e in events if e.kind == "steam_move" and e.team == "Red Sox"]
     assert len(rs_steam) == 1
     assert rs_steam[0].direction == "down"
-    # 参加ブックが2つ
-    assert len(rs_steam[0].books) == 2
-    book_names = {b["bookmaker"] for b in rs_steam[0].books}
-    assert book_names == {"Pinnacle", "BetOnline.ag"}
+    assert len(rs_steam[0].books) == 3
+
+
+def test_steam_does_not_fire_with_only_two_books(session):
+    """2ブックしか動かない → 3未満なので Steam は出ない。"""
+    games = [_game_with_books([
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", -111)]),  # 1.90 動いた
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", -111)]),  # 1.90 動いた
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", 100)]),   # 2.00 動かない
+    ])]
+    base_map = {
+        ("g1", "Pinnacle",     "Red Sox"): 2.00,
+        ("g1", "BetOnline.ag", "Red Sox"): 2.00,
+        ("g1", "LowVig.ag",    "Red Sox"): 2.00,
+        ("g1", "Pinnacle",     "Yankees"): 1.50,
+        ("g1", "BetOnline.ag", "Yankees"): 1.50,
+        ("g1", "LowVig.ag",    "Yankees"): 1.50,
+    }
+    state = MonitorState()
+    events = evaluate(session, games, base_map, state, alert_time=ALERT_TIME)
+    assert [e for e in events if e.kind == "steam_move" and e.team == "Red Sox"] == []
+
+
+def test_steam_ignores_sides_above_2_1(session):
+    """3ブック動いても 2.1倍より高いサイドは対象外で Steam は出ない。"""
+    # Red Sox 基準2.40 → 現在2.25（>2.1）を3ブックで → 除外
+    games = [_game_with_books([
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", 125)]),  # 2.25
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", 125)]),
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", 125)]),
+    ])]
+    base_map = {("g1", b, "Red Sox"): 2.40 for b in ["Pinnacle", "BetOnline.ag", "LowVig.ag"]}
+    base_map.update({("g1", b, "Yankees"): 1.50 for b in ["Pinnacle", "BetOnline.ag", "LowVig.ag"]})
+    state = MonitorState()
+    events = evaluate(session, games, base_map, state, alert_time=ALERT_TIME)
+    assert [e for e in events if e.kind == "steam_move" and e.team == "Red Sox"] == []
 
 
 def test_steam_does_not_fire_on_opposite_directions(session):
@@ -216,45 +248,45 @@ def test_steam_does_not_re_fire_until_direction_changes(session):
     assert [e for e in events if e.kind == "steam_move"] == []
 
 
-def test_steam_clear_fires_when_no_longer_2_books(session):
-    games_moved = [_game_with_books([
-        ("Pinnacle",      [("Yankees", -200), ("Red Sox", 140)]),
-        ("BetOnline.ag",  [("Yankees", -195), ("Red Sox", 140)]),
+def test_steam_clear_fires_when_no_longer_enough_books(session):
+    # 3ブック下落で発火 → 基準に戻って解除
+    moved = [_game_with_books([
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", -111)]),
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", -111)]),
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", -111)]),
     ])]
-    # 戻った状態（ベースと同じ近辺）
-    games_back = [_game_with_books([
-        ("Pinnacle",      [("Yankees", -167), ("Red Sox", 150)]),
-        ("BetOnline.ag",  [("Yankees", -167), ("Red Sox", 150)]),
+    back = [_game_with_books([
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", 100)]),
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", 100)]),
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", 100)]),
     ])]
     base_map = {
-        ("g1", "Pinnacle",     "Yankees"): 1.60,
-        ("g1", "Pinnacle",     "Red Sox"): 2.50,
-        ("g1", "BetOnline.ag", "Yankees"): 1.60,
-        ("g1", "BetOnline.ag", "Red Sox"): 2.50,
+        ("g1", "Pinnacle",     "Red Sox"): 2.00,
+        ("g1", "BetOnline.ag", "Red Sox"): 2.00,
+        ("g1", "LowVig.ag",    "Red Sox"): 2.00,
+        ("g1", "Pinnacle",     "Yankees"): 1.50,
+        ("g1", "BetOnline.ag", "Yankees"): 1.50,
+        ("g1", "LowVig.ag",    "Yankees"): 1.50,
     }
     state = MonitorState()
-    evaluate(session, games_moved, base_map, state, alert_time=ALERT_TIME)  # 発火
-    events = evaluate(session, games_back, base_map, state, alert_time=ALERT_TIME)  # 解除
+    evaluate(session, moved, base_map, state, alert_time=ALERT_TIME)   # 発火
+    events = evaluate(session, back, base_map, state, alert_time=ALERT_TIME)  # 解除
     session.commit()
-    clears = [e for e in events if e.kind == "steam_clear"]
+    clears = [e for e in events if e.kind == "steam_clear" and e.team == "Red Sox"]
     assert len(clears) >= 1
 
 
 def test_steam_fires_even_without_pinnacle(session):
-    """Pinnacleが動いていなくても、BetOnline+LowVig だけで Steam が出る。"""
+    """Pinnacleが動かなくても、3つの他ブックだけで Steam が出る。"""
+    books = ["Pinnacle", "BetOnline.ag", "LowVig.ag", "MyBookie.ag"]
     games = [_game_with_books([
-        ("Pinnacle",     [("Yankees", -167), ("Red Sox", 150)]),  # 動かない
-        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", 140)]),
-        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", 140)]),
+        ("Pinnacle",     [("Yankees", -200), ("Red Sox", 100)]),   # 2.00 動かない
+        ("BetOnline.ag", [("Yankees", -200), ("Red Sox", -111)]),  # 1.90
+        ("LowVig.ag",    [("Yankees", -200), ("Red Sox", -111)]),
+        ("MyBookie.ag",  [("Yankees", -200), ("Red Sox", -111)]),
     ])]
-    base_map = {
-        ("g1", "Pinnacle",     "Yankees"): 1.60,
-        ("g1", "Pinnacle",     "Red Sox"): 2.50,
-        ("g1", "BetOnline.ag", "Yankees"): 1.60,
-        ("g1", "BetOnline.ag", "Red Sox"): 2.50,
-        ("g1", "LowVig.ag",    "Yankees"): 1.60,
-        ("g1", "LowVig.ag",    "Red Sox"): 2.50,
-    }
+    base_map = {("g1", b, "Red Sox"): 2.00 for b in books}
+    base_map.update({("g1", b, "Yankees"): 1.50 for b in books})
     state = MonitorState()
     events = evaluate(session, games, base_map, state, alert_time=ALERT_TIME)
     session.commit()
@@ -262,4 +294,58 @@ def test_steam_fires_even_without_pinnacle(session):
     assert len(rs_steam) == 1
     book_names = {b["bookmaker"] for b in rs_steam[0].books}
     assert "Pinnacle" not in book_names
-    assert book_names == {"BetOnline.ag", "LowVig.ag"}
+    assert book_names == {"BetOnline.ag", "LowVig.ag", "MyBookie.ag"}
+
+
+# =====================================================================
+# C. ハンデ(handicap)モード: 基準pointの価格で判定する
+# =====================================================================
+def _handicap_game(marlins_point_1_0_price: int):
+    """Pinnacle の alternate_spreads 階段を持つ試合。"""
+    return {
+        "id": "g1",
+        "away_team": "Marlins",
+        "home_team": "Pirates",
+        "commence_time": "2026-05-28T15:00:00Z",
+        "bookmakers": [{
+            "title": "Pinnacle",
+            "markets": [{"key": "alternate_spreads", "outcomes": [
+                {"name": "Marlins", "point": 1.0, "price": marlins_point_1_0_price},
+                {"name": "Marlins", "point": 1.5, "price": -160},
+                {"name": "Pirates", "point": -1.0, "price": -105},
+            ]}],
+        }],
+    }
+
+
+def test_handicap_level_uses_base_point_price(session):
+    """基準で選んだ point(+1.0) の現在価格だけで Level を判定する。"""
+    # 基準: Marlins +1.0 @ 1.91 → 現在 +1.0 @ 1.80 (american -125) → 変動 -0.11 → LEVEL3
+    games = [_handicap_game(-125)]
+    base_map = {("g1", "Pinnacle", "Marlins"): 1.91}
+    base_points = {("g1", "Pinnacle", "Marlins"): 1.0}
+    state = MonitorState()
+    events = evaluate(
+        session, games, base_map, state,
+        alert_time=ALERT_TIME, sport="baseball_mlb", base_points=base_points,
+    )
+    session.commit()
+    pinn = [e for e in events if e.kind == "pinnacle_level" and e.team == "Marlins"]
+    assert len(pinn) == 1
+    assert pinn[0].level == 3
+    assert pinn[0].point == 1.0
+    assert pinn[0].current_odds == 1.80
+
+
+def test_handicap_ignores_non_base_point(session):
+    """基準pointと違うラインしか動いていなければ Level は出ない。"""
+    # 基準 +1.0 @1.91。現在も +1.0 @1.91（-110）→ 動いていない
+    games = [_handicap_game(-110)]
+    base_map = {("g1", "Pinnacle", "Marlins"): 1.91}
+    base_points = {("g1", "Pinnacle", "Marlins"): 1.0}
+    state = MonitorState()
+    events = evaluate(
+        session, games, base_map, state,
+        alert_time=ALERT_TIME, sport="baseball_mlb", base_points=base_points,
+    )
+    assert [e for e in events if e.kind == "pinnacle_level"] == []

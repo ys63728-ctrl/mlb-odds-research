@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from src import config
 from src.db.models import OddsSnapshot
-from src.utils.odds_utils import american_to_decimal
+from src.utils.odds_utils import american_to_decimal, decimal_to_american, pick_balanced_line
 from src.utils.time_utils import parse_commence_time, is_within_24h, now_utc
 
 
@@ -101,5 +101,75 @@ def save_snapshot(
                     )
                     session.add(row)
                     saved += 1
+
+    return saved
+
+
+def save_snapshot_handicap(
+    session: Session,
+    games: list[dict],
+    snapshot_time_jst: datetime,
+    *,
+    sport: str | None = None,
+) -> int:
+    """
+    各試合・各ブックの『1.9ライン』だけをスナップショット保存する（market='spreads'）。
+    全ハンデ階段を保存すると膨大になるため、監視対象の1.9ラインに絞る。
+    """
+    sport = sport or config.SPORT_KEY
+    snap_naive = (
+        snapshot_time_jst.replace(tzinfo=None)
+        if snapshot_time_jst.tzinfo is not None
+        else snapshot_time_jst
+    )
+
+    saved = 0
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        commence_str = game.get("commence_time")
+        if not commence_str:
+            continue
+        try:
+            commence = parse_commence_time(commence_str)
+        except Exception:
+            continue
+
+        game_id = game.get("id") or ""
+        away = game.get("away_team", "")
+        home = game.get("home_team", "")
+        game_name = f"{away} vs {home}"
+
+        for bookmaker in game.get("bookmakers", []) or []:
+            if not isinstance(bookmaker, dict):
+                continue
+            book = bookmaker.get("title")
+            if not book:
+                continue
+            outcomes: list[dict] = []
+            for market in bookmaker.get("markets", []) or []:
+                if market.get("key") == "alternate_spreads":
+                    outcomes.extend(market.get("outcomes", []) or [])
+            if not outcomes:
+                continue
+            for team, info in pick_balanced_line(outcomes).items():
+                dec = info["odds_decimal"]
+                row = OddsSnapshot(
+                    sport=sport,
+                    snapshot_time=snap_naive,
+                    game_id=game_id,
+                    game_name=game_name,
+                    away_team=away,
+                    home_team=home,
+                    commence_time=commence.replace(tzinfo=None),
+                    bookmaker=book,
+                    market="spreads",
+                    team=team,
+                    odds_decimal=Decimal(str(dec)),
+                    odds_american=decimal_to_american(dec),
+                    point=Decimal(str(info["point"])),
+                )
+                session.add(row)
+                saved += 1
 
     return saved

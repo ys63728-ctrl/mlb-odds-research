@@ -23,17 +23,17 @@ from datetime import datetime, timezone, timedelta
 import discord
 
 from src import config
-from src.api.odds_api import get_current_games
+from src.api.odds_api import get_games_with_handicap, get_events
 from src.db.database import get_session
 from src.monitor.base_odds import (
-    create_base_odds,
-    create_base_odds_for_game,
+    create_base_odds_handicap,
+    create_base_odds_for_game_handicap,
     has_base_odds_for_date,
     has_base_odds_for_game,
-    load_base_odds_map,
+    load_base_odds_handicap,
 )
 from src.monitor.level_check import MonitorState, NotificationEvent, evaluate
-from src.monitor.snapshot import save_snapshot
+from src.monitor.snapshot import save_snapshot_handicap
 from src.utils.team_names import format_game_name_ja, to_ja
 from src.utils.time_utils import (
     in_monitor_window,
@@ -68,7 +68,14 @@ NPB_PREPOLL_MINUTES = 3
 # =====================================================================
 # 通知文の整形
 # =====================================================================
-def format_pinnacle_level(e: NotificationEvent) -> str:
+def _point_str(point: float | None) -> str:
+    """ハンデのライン値を ' (ハンデ +1.0)' のような表記にする。None なら空文字。"""
+    if point is None:
+        return ""
+    return f"（ハンデ {point:+g}）"
+
+
+def format_pinnacle_level(e: NotificationEvent, emoji: str = "⚾") -> str:
     badge = {
         1: "🟢 LEVEL1",
         2: "🟠 LEVEL2",
@@ -81,8 +88,8 @@ def format_pinnacle_level(e: NotificationEvent) -> str:
     direction = "📈 オッズ上昇" if (e.move or 0) > 0 else "📉 オッズ低下"
     return (
         f"{badge}\n"
-        f"⚾ {format_game_name_ja(e.game_name)}\n"
-        f"🎯 {to_ja(e.team)}\n"
+        f"{emoji} {format_game_name_ja(e.game_name)}\n"
+        f"🎯 {to_ja(e.team)}{_point_str(e.point)}\n"
         f"📚 {e.bookmaker}\n\n"
         f"基準: {e.base_odds:.2f}\n"
         f"現在: {e.current_odds:.2f}\n"
@@ -91,11 +98,11 @@ def format_pinnacle_level(e: NotificationEvent) -> str:
     )
 
 
-def format_pinnacle_clear(e: NotificationEvent) -> str:
+def format_pinnacle_clear(e: NotificationEvent, emoji: str = "⚾") -> str:
     return (
         f"⚪ LEVEL解除\n"
-        f"⚾ {format_game_name_ja(e.game_name)}\n"
-        f"🎯 {to_ja(e.team)}\n"
+        f"{emoji} {format_game_name_ja(e.game_name)}\n"
+        f"🎯 {to_ja(e.team)}{_point_str(e.point)}\n"
         f"📚 {e.bookmaker}\n\n"
         f"基準: {e.base_odds:.2f}\n"
         f"現在: {e.current_odds:.2f}\n"
@@ -103,27 +110,28 @@ def format_pinnacle_clear(e: NotificationEvent) -> str:
     )
 
 
-def format_steam_move(e: NotificationEvent) -> str:
+def format_steam_move(e: NotificationEvent, emoji: str = "⚾") -> str:
     arrow = "📈 上昇" if e.direction == "up" else "📉 低下"
     lines = [
         f"⚡ Steam Move 検知（{arrow} / {len(e.books)}ブック同方向）",
-        f"⚾ {format_game_name_ja(e.game_name)}",
+        f"{emoji} {format_game_name_ja(e.game_name)}",
         f"🎯 {to_ja(e.team)}",
         "",
         "参加ブック:",
     ]
     for b in e.books:
+        pt = _point_str(b.get("point"))
         lines.append(
-            f"  - {b['bookmaker']}: {b['base']:.2f} → {b['current']:.2f} ({b['move']:+.2f})"
+            f"  - {b['bookmaker']}{pt}: {b['base']:.2f} → {b['current']:.2f} ({b['move']:+.2f})"
         )
     return "\n".join(lines)
 
 
-def format_steam_clear(e: NotificationEvent) -> str:
+def format_steam_clear(e: NotificationEvent, emoji: str = "⚾") -> str:
     arrow = "上昇" if e.direction == "up" else "低下"
     return (
         f"⚪ Steam Move 解除（直前: {arrow}）\n"
-        f"⚾ {format_game_name_ja(e.game_name)}\n"
+        f"{emoji} {format_game_name_ja(e.game_name)}\n"
         f"🎯 {to_ja(e.team)}\n"
         f"（同方向ブック数が {config.STEAM_MIN_BOOKS} 未満になった）"
     )
@@ -137,8 +145,8 @@ _FORMATTERS = {
 }
 
 
-def format_event(e: NotificationEvent) -> str:
-    return _FORMATTERS[e.kind](e)
+def format_event(e: NotificationEvent, emoji: str = "⚾") -> str:
+    return _FORMATTERS[e.kind](e, emoji)
 
 
 async def _send(channel, label: str, text: str) -> None:
@@ -159,10 +167,12 @@ class SportRuntime:
         self.cfg = sport_cfg
         self.sport_key = sport_cfg["sport_key"]
         self.label = sport_cfg["label"]
+        self.emoji = sport_cfg.get("emoji", "⚾")
         self.window = sport_cfg["window"]
 
         self.state = MonitorState()
-        self.base_odds_map: dict[tuple[str, str, str], float] = {}
+        self.base_odds_map: dict[tuple[str, str, str], float] = {}       # 基準価格(decimal)
+        self.base_points: dict[tuple[str, str, str], float] = {}         # 基準のハンデ点
         self.last_check_time: datetime | None = None
         self.last_snapshot_time: datetime | None = None
 
@@ -171,8 +181,9 @@ class SportRuntime:
         self.was_in_window = False
 
         # --- 試合ごと方式(NPB)用 ---
-        self.cached_games: list[dict] = []          # 直近に取得した試合一覧
-        self.last_fetch_time: datetime | None = None
+        self.cached_games: list[dict] = []          # 予定(get_events)のキャッシュ。窓判定に使う
+        self.last_schedule_time: datetime | None = None  # 予定を最後に更新した時刻
+        self.last_fetch_time: datetime | None = None     # ハンデ階段を最後に取った時刻
         # game_id -> {"name": 試合名, "commence": 開始UTC}
         self.active_games: dict[str, dict] = {}
         self.last_seen_date = None
@@ -181,10 +192,12 @@ class SportRuntime:
         """日付が変わったときに当日ぶんの状態をまっさらにする。"""
         self.state = MonitorState()
         self.base_odds_map = {}
+        self.base_points = {}
         self.last_check_time = None
         self.last_snapshot_time = None
         self.last_base_date = None
         self.active_games = {}
+        self.last_fetch_time = None
 
 
 # =====================================================================
@@ -244,41 +257,55 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
         return
     rt.last_check_time = now
 
-    games = get_current_games(rt.sport_key)
+    games = get_games_with_handicap(rt.sport_key)
     with get_session() as s:
         events = evaluate(
-            s, games, rt.base_odds_map, rt.state, alert_time=now, sport=rt.sport_key
+            s, games, rt.base_odds_map, rt.state,
+            alert_time=now, sport=rt.sport_key, base_points=rt.base_points,
         )
         if _should_snapshot(rt, now):
-            saved = save_snapshot(s, games, now, sport=rt.sport_key)
+            saved = save_snapshot_handicap(s, games, now, sport=rt.sport_key)
             rt.last_snapshot_time = now
             print(f"[{now}] {rt.sport_key} スナップショット保存: {saved}行")
 
     for e in events:
-        await _send(channel, rt.label, format_event(e))
+        await _send(channel, rt.label, format_event(e, rt.emoji))
 
 
 async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
-    """今日の基準オッズをDBに作る(または再起動時に復元する)。"""
-    games_for_base = get_current_games(rt.sport_key)
+    """今日の基準オッズ(ハンデ1.9ライン)をDBに作る(または再起動時に復元する)。"""
+    games_for_base = get_games_with_handicap(rt.sport_key)
+
+    # API取得が空（ネット瞬断・DNS失敗など）の場合は、今日を「準備済み」にしない。
+    # ここで確定させてしまうと空の基準で監視が始まり、Level通知も出ず、やり直しも
+    # されない（実際に発生）。last_base_date を更新せず return し、次のtickで再試行する。
+    if not games_for_base:
+        print(f"[{now}] {rt.sport_key} 基準オッズの取得に失敗(空)。今日は未確定のまま次のtickで再試行する")
+        return
+
     base_created_now = False
     msg_base_saved = None
 
     with get_session() as s:
-        if not has_base_odds_for_date(s, today, sport=rt.sport_key):
-            saved = create_base_odds(s, games_for_base, today, sport=rt.sport_key)
+        if not has_base_odds_for_date(s, today, sport=rt.sport_key, market="spreads"):
+            saved = create_base_odds_handicap(s, games_for_base, today, sport=rt.sport_key)
             base_created_now = True
+            if saved == 0:
+                print(f"⚠️ [{rt.sport_key}] 試合はあるがハンデ(alternate_spreads)が0件。"
+                      f"この競技はハンデ非対応の可能性。基準が空のため検知できません")
             msg_base_saved = (
                 f"📌 基準オッズ保存完了 (JST {now.strftime('%H:%M')})\n"
-                f"対象: {rt.sport_key} / 24時間以内\n"
+                f"対象: {rt.sport_key} / ハンデ1.9ライン / 24時間以内\n"
                 f"監視ウィンドウ: {config.BASE_HOUR:02d}:{config.BASE_MINUTE:02d}"
                 f" 〜 {config.END_HOUR:02d}:{config.END_MINUTE:02d}\n"
                 f"単体通知主軸: {config.PRIMARY_BOOKMAKER}\n"
-                f"Steam: {config.STEAM_THRESHOLD:+}/{config.STEAM_MIN_BOOKS}ブック同方向\n"
-                f"全ブック保存件数: {saved}"
+                f"Steam: 同方向{config.STEAM_MIN_BOOKS}ブック以上 / 2.1倍以下 / 閾値{config.STEAM_THRESHOLD}\n"
+                f"基準保存件数: {saved}"
             )
         s.flush()
-        rt.base_odds_map = load_base_odds_map(s, today, sport=rt.sport_key)
+        hb = load_base_odds_handicap(s, today, sport=rt.sport_key)
+        rt.base_odds_map = {k: v["odds"] for k, v in hb.items()}
+        rt.base_points = {k: v["point"] for k, v in hb.items()}
 
     rt.last_base_date = today
     rt.state = MonitorState()
@@ -358,31 +385,39 @@ async def _handle_pregame(channel, rt: SportRuntime, now: datetime) -> None:
         await _send(
             channel, rt.label,
             f"⏹ 監視終了（開始{cutoff}分前を経過）\n"
-            f"⚾ {format_game_name_ja(info['name'])}",
+            f"{rt.emoji} {format_game_name_ja(info['name'])}",
         )
 
-    # --- ポーリング頻度を決める（窓が近い試合がある時だけ毎分）---
-    active_cached, imminent = _pregame_active_and_imminent(
+    # --- 1) 予定(無料 get_events)を低頻度で更新。窓判定に必要な commence_time を持つ ---
+    schedule_due = (
+        rt.last_schedule_time is None
+        or (now - rt.last_schedule_time).total_seconds() >= NPB_SCHEDULE_REFRESH_SECONDS
+    )
+    if schedule_due:
+        ev = get_events(rt.sport_key)
+        if ev:
+            rt.cached_games = ev
+        rt.last_schedule_time = now
+
+    # --- 2) 予定から「窓内/もうすぐ窓」を判定。近くに無ければ何もしない（無料のまま）---
+    active_sched, imminent = _pregame_active_and_imminent(
         rt.cached_games, now_utc_dt, lead, cutoff
     )
-    need_fast = bool(active_cached) or imminent
-    interval = config.CHECK_INTERVAL_SECONDS if need_fast else NPB_SCHEDULE_REFRESH_SECONDS
-    should_fetch = (
-        rt.last_fetch_time is None
-        or (now - rt.last_fetch_time).total_seconds() >= interval
-    )
-    if not should_fetch:
+    if not (active_sched or imminent):
         return
 
-    # --- フェッチ（失敗時=空は既存の予定を保持して次回再試行）---
-    games = get_current_games(rt.sport_key)
+    # --- 3) 窓が近い → ハンデ階段(有料)を毎分取得して基準保存・判定 ---
+    if (
+        rt.last_fetch_time is not None
+        and (now - rt.last_fetch_time).total_seconds() < config.CHECK_INTERVAL_SECONDS
+    ):
+        return
     rt.last_fetch_time = now
-    if games:
-        rt.cached_games = games
 
-    active_now, _ = _pregame_active_and_imminent(
-        rt.cached_games, now_utc_dt, lead, cutoff
-    )
+    games = get_games_with_handicap(rt.sport_key)
+    if not games:
+        return
+    active_now, _ = _pregame_active_and_imminent(games, now_utc_dt, lead, cutoff)
     if not active_now:
         return
 
@@ -395,15 +430,16 @@ async def _handle_pregame(channel, rt: SportRuntime, now: datetime) -> None:
 
         # 窓内の試合だけで判定
         events = evaluate(
-            s, active_now, rt.base_odds_map, rt.state, alert_time=now, sport=rt.sport_key
+            s, active_now, rt.base_odds_map, rt.state,
+            alert_time=now, sport=rt.sport_key, base_points=rt.base_points,
         )
         if _should_snapshot(rt, now):
-            saved = save_snapshot(s, active_now, now, sport=rt.sport_key)
+            saved = save_snapshot_handicap(s, active_now, now, sport=rt.sport_key)
             rt.last_snapshot_time = now
             print(f"[{now}] {rt.sport_key} スナップショット保存: {saved}行")
 
     for e in events:
-        await _send(channel, rt.label, format_event(e))
+        await _send(channel, rt.label, format_event(e, rt.emoji))
 
 
 async def _open_npb_game(channel, rt: SportRuntime, session, game: dict, lead: int) -> None:
@@ -415,12 +451,18 @@ async def _open_npb_game(channel, rt: SportRuntime, session, game: dict, lead: i
     commence = parse_commence_time(game["commence_time"])
     base_date = commence.astimezone(config.JST).date()
 
-    existed = has_base_odds_for_game(session, gid, sport=rt.sport_key)
+    existed = has_base_odds_for_game(session, gid, sport=rt.sport_key, market="spreads")
+    saved = 0
     if not existed:
-        saved = create_base_odds_for_game(session, game, base_date, sport=rt.sport_key)
+        saved = create_base_odds_for_game_handicap(session, game, base_date, sport=rt.sport_key)
         session.flush()
+        if saved == 0:
+            print(f"⚠️ [{rt.sport_key}] {game_name}: ハンデ(alternate_spreads)が0件。"
+                  f"NPBはハンデ非対応の可能性。基準が空のため検知できません")
     # メモリ上の基準マップにこの試合ぶんを取り込む（再起動時もここでDBから復元）
-    rt.base_odds_map.update(load_base_odds_map(session, base_date, sport=rt.sport_key))
+    hb = load_base_odds_handicap(session, base_date, sport=rt.sport_key)
+    rt.base_odds_map.update({k: v["odds"] for k, v in hb.items()})
+    rt.base_points.update({k: v["point"] for k, v in hb.items()})
 
     rt.active_games[gid] = {"name": game_name, "commence": commence}
 
@@ -428,10 +470,10 @@ async def _open_npb_game(channel, rt: SportRuntime, session, game: dict, lead: i
         await _send(
             channel, rt.label,
             f"👀 監視開始（開始{lead}分前）\n"
-            f"⚾ {format_game_name_ja(game_name)}\n"
-            f"📌 基準オッズ保存・全ブック {saved}行\n"
+            f"{rt.emoji} {format_game_name_ja(game_name)}\n"
+            f"📌 基準オッズ保存(ハンデ1.9ライン) {saved}行\n"
             f"単体通知主軸: {config.PRIMARY_BOOKMAKER}\n"
-            f"Steam: 同方向{config.STEAM_MIN_BOOKS}ブック以上 / 閾値 {config.STEAM_THRESHOLD}",
+            f"Steam: 同方向{config.STEAM_MIN_BOOKS}ブック以上 / 2.1倍以下 / 閾値 {config.STEAM_THRESHOLD}",
         )
     else:
         await _send(

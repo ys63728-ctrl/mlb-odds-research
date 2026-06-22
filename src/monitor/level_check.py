@@ -49,6 +49,7 @@ class NotificationEvent:
     base_odds: float | None = None
     current_odds: float | None = None
     move: float | None = None
+    point: float | None = None          # ハンデのライン値（例 +1.0）。h2hでは None
     # --- Steam Move 通知 ---
     direction: str | None = None        # 'up' | 'down'
     books: list[dict] = field(default_factory=list)
@@ -69,7 +70,7 @@ def get_level(move: float) -> int:
 
 
 def _extract_current_odds(game: dict) -> dict[tuple[str, str], float]:
-    """game から (bookmaker, team) -> decimal の辞書を作る。"""
+    """game から (bookmaker, team) -> decimal の辞書を作る（h2h用）。"""
     result: dict[tuple[str, str], float] = {}
     for bookmaker in game.get("bookmakers", []) or []:
         if not isinstance(bookmaker, dict):
@@ -87,6 +88,43 @@ def _extract_current_odds(game: dict) -> dict[tuple[str, str], float]:
     return result
 
 
+def _extract_handicap_current(
+    game: dict,
+    game_id: str,
+    base_points: dict[tuple[str, str, str], float],
+) -> dict[tuple[str, str], float]:
+    """
+    ハンデ用。各ブック/チームについて『基準で選んだ point の現在価格』だけを取り出す。
+    こうすると、価格変動もライン移動も、その固定pointの価格のブレとして検知できる。
+    返り値: (bookmaker, team) -> decimal
+    """
+    result: dict[tuple[str, str], float] = {}
+    for bookmaker in game.get("bookmakers", []) or []:
+        if not isinstance(bookmaker, dict):
+            continue
+        book = bookmaker.get("title")
+        if not book:
+            continue
+        for market in bookmaker.get("markets", []) or []:
+            if market.get("key") != "alternate_spreads":
+                continue
+            for outcome in market.get("outcomes", []) or []:
+                team = outcome.get("name")
+                point = outcome.get("point")
+                price = outcome.get("price")
+                if team is None or point is None or price is None:
+                    continue
+                bp = base_points.get((game_id, book, team))
+                if bp is None:
+                    continue
+                try:
+                    if abs(float(point) - float(bp)) < 1e-9:
+                        result[(book, team)] = american_to_decimal(price)
+                except (TypeError, ValueError):
+                    continue
+    return result
+
+
 # =====================================================================
 # メイン判定
 # =====================================================================
@@ -98,6 +136,7 @@ def evaluate(
     *,
     alert_time: datetime,
     sport: str | None = None,
+    base_points: dict[tuple[str, str, str], float] | None = None,
 ) -> list[NotificationEvent]:
     """
     現在の games と 基準オッズ・状態 を使って判定を行い、
@@ -131,7 +170,10 @@ def evaluate(
         home = game.get("home_team", "")
         game_name = f"{away} vs {home}"
 
-        current_by_book = _extract_current_odds(game)
+        if base_points is not None:
+            current_by_book = _extract_handicap_current(game, game_id, base_points)
+        else:
+            current_by_book = _extract_current_odds(game)
         if not current_by_book:
             continue
 
@@ -142,13 +184,13 @@ def evaluate(
                 session, events, state,
                 game_id, game_name, team,
                 current_by_book, base_odds_map,
-                alert_time_naive, sport,
+                alert_time_naive, sport, base_points,
             )
             _check_steam(
                 session, events, state,
                 game_id, game_name, team,
                 current_by_book, base_odds_map,
-                alert_time_naive, sport,
+                alert_time_naive, sport, base_points,
             )
 
     return events
@@ -165,6 +207,7 @@ def _check_pinnacle(
     base_odds_map: dict[tuple[str, str, str], float],
     alert_time_naive: datetime,
     sport: str,
+    base_points: dict[tuple[str, str, str], float] | None = None,
 ) -> None:
     """A. Pinnacle 単体変動の判定。"""
     pinn_book = config.PRIMARY_BOOKMAKER
@@ -180,6 +223,7 @@ def _check_pinnacle(
         return
 
     state.pinnacle_levels[(game_id, team)] = new_level
+    point = base_points.get((game_id, pinn_book, team)) if base_points else None
 
     if new_level == 0:
         kind = "pinnacle_clear"
@@ -197,6 +241,7 @@ def _check_pinnacle(
         base_odds=base,
         current_odds=current,
         move=move,
+        point=point,
     ))
     session.add(Alert(
         sport=sport,
@@ -222,13 +267,17 @@ def _check_steam(
     base_odds_map: dict[tuple[str, str, str], float],
     alert_time_naive: datetime,
     sport: str,
+    base_points: dict[tuple[str, str, str], float] | None = None,
 ) -> None:
-    """B. Steam Move (同方向 ≥N ブック) の判定。"""
+    """B. Steam Move (同方向 ≥STEAM_MIN_BOOKS ブック / 2.1倍以下のみ対象) の判定。"""
     moved_up: list[dict] = []
     moved_down: list[dict] = []
 
     for (book, t), current in current_by_book.items():
         if t != team:
+            continue
+        # 2.1倍より高いサイドは対象外（片側だけ見れば十分なため）
+        if current > config.STEAM_MAX_ODDS:
             continue
         base = base_odds_map.get((game_id, book, team))
         if base is None:
@@ -236,7 +285,8 @@ def _check_steam(
         move = round(current - base, 2)
         if abs(move) < config.STEAM_THRESHOLD:
             continue
-        entry = {"bookmaker": book, "base": base, "current": current, "move": move}
+        point = base_points.get((game_id, book, team)) if base_points else None
+        entry = {"bookmaker": book, "base": base, "current": current, "move": move, "point": point}
         if move > 0:
             moved_up.append(entry)
         else:
