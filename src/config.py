@@ -56,6 +56,27 @@ WINDOW_PREGAME = "pregame"
 NPB_LEAD_MINUTES = 90    # 試合開始の何分前から監視を始めるか（=基準を取る時点）
 NPB_CUTOFF_MINUTES = 5   # 試合開始の何分前で監視を打ち切るか
 
+# サッカー6大リーグの監視窓・ペーパートレード設定（JST）
+#   MLBは 21:00基準〜23:59監視・23:30判定。サッカーは 20:00基準〜24:00監視・24:00判定。
+#   24:00丁度は日付が変わるため、監視・判定とも実質 23:59（最終スナップ）で扱う。
+SOCCER_BASE_HOUR = 20
+SOCCER_BASE_MINUTE = 0
+SOCCER_END_HOUR = 23
+SOCCER_END_MINUTE = 59
+SOCCER_CHECK_HOUR = 23      # ペーパートレード判定時刻（≒24:00）
+SOCCER_CHECK_MINUTE = 59
+SOCCER_TARGET_ODDS = 1.94  # アジアンハンデ基準ライン＝価格がこの値に最も近い point
+
+# 追加する欧州6リーグ (The Odds API の sport_key, 表示ラベル)
+_SOCCER_LEAGUES = [
+    ("soccer_spain_la_liga",         "⚽ラリーガ"),
+    ("soccer_epl",                   "⚽プレミア"),
+    ("soccer_italy_serie_a",         "⚽セリエA"),
+    ("soccer_france_ligue_one",      "⚽リーグアン"),
+    ("soccer_germany_bundesliga",    "⚽ブンデス"),
+    ("soccer_netherlands_eredivisie","⚽エールディビジ"),
+]
+
 SPORTS = [
     {
         "sport_key": "baseball_mlb",
@@ -79,6 +100,22 @@ SPORTS = [
         "emoji": "⚽",
         "window": WINDOW_FIXED_CLOCK,
     },
+] + [
+    # 欧州6リーグ。すべて固定時刻方式・20:00基準〜24:00監視・24:00判定・基準1.94。
+    {
+        "sport_key": key,
+        "label": label,
+        "emoji": "⚽",
+        "window": WINDOW_FIXED_CLOCK,
+        "base_hour": SOCCER_BASE_HOUR,
+        "base_minute": SOCCER_BASE_MINUTE,
+        "end_hour": SOCCER_END_HOUR,
+        "end_minute": SOCCER_END_MINUTE,
+        "check_hour": SOCCER_CHECK_HOUR,
+        "check_minute": SOCCER_CHECK_MINUTE,
+        "target_odds": SOCCER_TARGET_ODDS,
+    }
+    for key, label in _SOCCER_LEAGUES
 ]
 
 
@@ -94,11 +131,39 @@ ODDS_FORMAT = "american"       # オッズ形式
 # =====================================================================
 JST = timezone(timedelta(hours=9))
 
-# 監視ウィンドウ: JST 21:00 〜 23:59
+# 監視ウィンドウ既定(MLB): JST 21:00 〜 23:59
 BASE_HOUR = 21
 BASE_MINUTE = 0
 END_HOUR = 23
 END_MINUTE = 59
+
+# ペーパートレード判定時刻の既定(MLB): JST 23:30
+CHECK_HOUR = 23
+CHECK_MINUTE = 30
+
+# 基準ライン選択の既定ターゲットオッズ(MLB=1.9ライン)。サッカーは各SPORTSで1.94に上書き。
+TARGET_ODDS_DEFAULT = 1.95
+
+
+def sport_window(cfg: dict) -> tuple[int, int, int, int]:
+    """スポーツ設定から監視窓 (base_hour, base_minute, end_hour, end_minute) を返す。
+    未指定なら既定(MLB)値を使う。"""
+    return (
+        cfg.get("base_hour", BASE_HOUR),
+        cfg.get("base_minute", BASE_MINUTE),
+        cfg.get("end_hour", END_HOUR),
+        cfg.get("end_minute", END_MINUTE),
+    )
+
+
+def sport_check_time(cfg: dict) -> tuple[int, int]:
+    """スポーツ設定からペーパートレード判定時刻 (hour, minute) を返す。"""
+    return (cfg.get("check_hour", CHECK_HOUR), cfg.get("check_minute", CHECK_MINUTE))
+
+
+def sport_target_odds(cfg: dict) -> float:
+    """スポーツ設定から基準ラインのターゲットオッズを返す。"""
+    return cfg.get("target_odds", TARGET_ODDS_DEFAULT)
 
 # 試合結果を取得する時刻（JST）。MLBの試合がほぼ終わる頃
 RESULT_FETCH_HOUR = 14

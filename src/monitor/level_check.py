@@ -30,8 +30,9 @@ from src.utils.odds_utils import american_to_decimal
 @dataclass
 class MonitorState:
     """通知の重複を防ぐためのメモリ上の状態。"""
-    pinnacle_levels: dict[tuple[str, str], int] = field(default_factory=dict)
-    # (game_id, team) -> 0/1/2/3
+    pinnacle_levels: dict[str, tuple[str, int]] = field(default_factory=dict)
+    # game_id -> (team, level)  … 試合ごとに「変動が大きい側」1枠だけを保持する。
+    # 同一カードは表裏で必ず両方動くため、通知は大きい側1件に集約する。
 
     steam_directions: dict[tuple[str, str], str | None] = field(default_factory=dict)
     # (game_id, team) -> 'up' | 'down' | None
@@ -179,13 +180,16 @@ def evaluate(
 
         teams_in_game = {team for (_, team) in current_by_book.keys()}
 
+        # A. Pinnacle 単体変動 … 同一カードは「変動が大きい側」だけを1件通知する。
+        _check_pinnacle(
+            session, events, state,
+            game_id, game_name, teams_in_game,
+            current_by_book, base_odds_map,
+            alert_time_naive, sport, base_points,
+        )
+
+        # B. Steam Move … 従来どおりチームごとに判定（要望対象外）。
         for team in teams_in_game:
-            _check_pinnacle(
-                session, events, state,
-                game_id, game_name, team,
-                current_by_book, base_odds_map,
-                alert_time_naive, sport, base_points,
-            )
             _check_steam(
                 session, events, state,
                 game_id, game_name, team,
@@ -202,27 +206,54 @@ def _check_pinnacle(
     state: MonitorState,
     game_id: str,
     game_name: str,
-    team: str,
+    teams_in_game: set[str],
     current_by_book: dict[tuple[str, str], float],
     base_odds_map: dict[tuple[str, str, str], float],
     alert_time_naive: datetime,
     sport: str,
     base_points: dict[tuple[str, str, str], float] | None = None,
 ) -> None:
-    """A. Pinnacle 単体変動の判定。"""
+    """
+    A. Pinnacle 単体変動の判定（試合ごとに1件）。
+
+    同じカードは表裏で必ず両方動く（例: ドジャース↑ならレッズ↓）ため、
+    Pinnacle の各チーム側の変動量を比べ、|変動量| が最大の「大きい側」だけを
+    1件だけ通知・記録する。解除・レベル変化・大きい側の入れ替わりも
+    この1枠(state.pinnacle_levels[game_id]=(team, level))で追従する。
+    """
     pinn_book = config.PRIMARY_BOOKMAKER
-    current = current_by_book.get((pinn_book, team))
-    base = base_odds_map.get((game_id, pinn_book, team))
-    if current is None or base is None:
+
+    # 各チーム側の Pinnacle 変動量を集める
+    candidates: list[tuple[str, float, float, float, int]] = []
+    for team in teams_in_game:
+        current = current_by_book.get((pinn_book, team))
+        base = base_odds_map.get((game_id, pinn_book, team))
+        if current is None or base is None:
+            continue
+        move = round(current - base, 2)
+        candidates.append((team, move, current, base, get_level(move)))
+
+    if not candidates:
         return
 
-    move = round(current - base, 2)
-    new_level = get_level(move)
-    old_level = state.pinnacle_levels.get((game_id, team), 0)
-    if new_level == old_level:
+    old = state.pinnacle_levels.get(game_id)  # (team, level) or None
+    stored_team = old[0] if old else None
+
+    # 「変動が大きい側」を選ぶ。同点のときは、直前に通知した側を優先（解除を正しく拾うため）。
+    dominant = max(
+        candidates,
+        key=lambda c: (abs(c[1]), 1 if c[0] == stored_team else 0),
+    )
+    team, move, current, base, new_level = dominant
+
+    # まだ一度も通知しておらず、かつ今回も動いていない → 何もしない
+    if old is None and new_level == 0:
+        return
+    # (通知した側, レベル) が前回と同じ → 再通知しない
+    if old is not None and old == (team, new_level):
         return
 
-    state.pinnacle_levels[(game_id, team)] = new_level
+    state.pinnacle_levels[game_id] = (team, new_level)
     point = base_points.get((game_id, pinn_book, team)) if base_points else None
 
     if new_level == 0:

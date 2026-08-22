@@ -91,6 +91,39 @@ def get_events(sport_key: str | None = None) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+def get_scores(sport_key: str | None = None, days_from: int = 3) -> list[dict]:
+    """
+    指定スポーツの「試合結果（スコア）」を取得する。
+
+    /scores は最大 days_from(最大3) 日前までの完了・進行中の試合を返す。
+    各要素は The Odds API の生JSON: id / commence_time / completed(bool) /
+    home_team / away_team / scores(=[{"name":.., "score":".."}] or None)。
+    id は /odds と同じ試合IDなので、こちらの game_id と直接突き合わせできる。
+    通信失敗時は空リスト。1呼び出し=1〜2クレジット程度。
+    """
+    sport = sport_key or config.SPORT_KEY
+    url = f"{ODDS_API_BASE}/sports/{sport}/scores/"
+    params = {
+        "apiKey": config.ODDS_API_KEY,
+        "daysFrom": max(1, min(int(days_from), 3)),
+        "dateFormat": "iso",
+    }
+    try:
+        response = requests.get(url, params=params, timeout=15)
+    except Exception as e:
+        print(f"[odds_api] scores 通信エラー: {e}")
+        return []
+    if response.status_code != 200:
+        print(f"[odds_api] scores APIエラー: {response.status_code} {response.text[:150]}")
+        return []
+    try:
+        data = response.json()
+    except Exception as e:
+        print(f"[odds_api] scores JSON解釈エラー: {e}")
+        return []
+    return data if isinstance(data, list) else []
+
+
 def get_games_with_handicap(
     sport_key: str | None = None,
     regions: str | None = None,

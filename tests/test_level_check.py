@@ -129,6 +129,49 @@ def test_pinnacle_level_clear_fires_when_returns_to_zero(session):
     assert clears[0].team == "Yankees"
 
 
+def test_pinnacle_only_larger_side_fires(session):
+    """同一カードで両サイド動いたら、|変動量|が大きい側だけ1件通知する。"""
+    # Yankees 2.40→2.50 (+0.10, Level3) / Red Sox 2.10→1.90 (-0.20, Level7)
+    games = [_game_with_books([("Pinnacle", [("Yankees", 150), ("Red Sox", -111)])])]
+    base_map = {
+        ("g1", "Pinnacle", "Yankees"): 2.40,
+        ("g1", "Pinnacle", "Red Sox"): 2.10,
+    }
+    state = MonitorState()
+    events = evaluate(session, games, base_map, state, alert_time=ALERT_TIME)
+    session.commit()
+
+    pinn = [e for e in events if e.kind == "pinnacle_level"]
+    assert len(pinn) == 1                 # 2件ではなく1件
+    assert pinn[0].team == "Red Sox"      # 大きく動いた側
+    assert pinn[0].level == 7
+    # DBも大きい側1件だけ（小さい側 Level3 は記録しない）
+    rows = session.execute(select(Alert)).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].team == "Red Sox"
+
+
+def test_pinnacle_dominant_side_can_switch(session):
+    """大きい側が入れ替わったら、新しく大きくなった側で1件通知する。"""
+    base_map = {
+        ("g1", "Pinnacle", "Yankees"): 1.70,
+        ("g1", "Pinnacle", "Red Sox"): 2.20,
+    }
+    state = MonitorState()
+    # 1回目: Yankees 1.50 (-0.20, Lv7) が優勢 / Red Sox 2.25 (+0.05, Lv1)
+    g1 = [_game_with_books([("Pinnacle", [("Yankees", -200), ("Red Sox", 125)])])]
+    ev1 = evaluate(session, g1, base_map, state, alert_time=ALERT_TIME)
+    assert [e.team for e in ev1 if e.kind == "pinnacle_level"] == ["Yankees"]
+    # 2回目: Red Sox 2.40 (+0.20, Lv7) が優勢 / Yankees 1.65 (-0.05, Lv1)
+    g2 = [_game_with_books([("Pinnacle", [("Yankees", -154), ("Red Sox", 140)])])]
+    ev2 = evaluate(session, g2, base_map, state, alert_time=ALERT_TIME)
+    session.commit()
+    pinn2 = [e for e in ev2 if e.kind == "pinnacle_level"]
+    assert len(pinn2) == 1
+    assert pinn2[0].team == "Red Sox"
+    assert pinn2[0].level == 7
+
+
 def test_non_pinnacle_book_does_not_trigger_pinnacle_alert(session):
     # William Hill だけ動かす → Pinnacle単体通知は出ない
     games = [_game_with_books([("William Hill", [("Yankees", -182), ("Red Sox", 150)])])]

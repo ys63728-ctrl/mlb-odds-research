@@ -201,7 +201,8 @@ def has_base_odds_for_game(
 # ハンデ(spreads)方式: 各ブックの「1.9ライン」を基準にする
 # =====================================================================
 def _save_one_game_handicap(
-    session: Session, game: dict, base_date: date, sport: str
+    session: Session, game: dict, base_date: date, sport: str,
+    target_decimal: float = config.TARGET_ODDS_DEFAULT,
 ) -> int:
     """
     1試合分について、各ブックの alternate_spreads から『1.9に最も近いライン』を選び、
@@ -237,7 +238,7 @@ def _save_one_game_handicap(
                 outcomes.extend(market.get("outcomes", []) or [])
         if not outcomes:
             continue
-        balanced = pick_balanced_line(outcomes)
+        balanced = pick_balanced_line(outcomes, target_decimal=target_decimal)
         for team, info in balanced.items():
             row = BaseOdds(
                 sport=sport,
@@ -257,22 +258,25 @@ def _save_one_game_handicap(
 
 
 def create_base_odds_handicap(
-    session: Session, games: list[dict], base_date: date, *, sport: str | None = None
+    session: Session, games: list[dict], base_date: date, *,
+    sport: str | None = None, target_decimal: float = config.TARGET_ODDS_DEFAULT,
 ) -> int:
-    """24時間以内の全試合について、ハンデの1.9ライン基準を保存する（固定時刻方式）。"""
+    """24時間以内の全試合について、ハンデ基準（価格が target_decimal に最も近いライン）を
+    保存する（固定時刻方式）。MLB=1.95 / サッカー=1.94。"""
     sport = sport or config.SPORT_KEY
     saved = 0
     for game in games:
-        saved += _save_one_game_handicap(session, game, base_date, sport)
+        saved += _save_one_game_handicap(session, game, base_date, sport, target_decimal)
     return saved
 
 
 def create_base_odds_for_game_handicap(
-    session: Session, game: dict, base_date: date, *, sport: str | None = None
+    session: Session, game: dict, base_date: date, *,
+    sport: str | None = None, target_decimal: float = config.TARGET_ODDS_DEFAULT,
 ) -> int:
-    """1試合が窓に入った瞬間に、その試合のハンデ1.9ライン基準を保存する（試合ごと方式）。"""
+    """1試合が窓に入った瞬間に、その試合のハンデ基準を保存する（試合ごと方式）。"""
     sport = sport or config.SPORT_KEY
-    return _save_one_game_handicap(session, game, base_date, sport)
+    return _save_one_game_handicap(session, game, base_date, sport, target_decimal)
 
 
 def load_base_odds_handicap(

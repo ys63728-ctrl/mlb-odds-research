@@ -30,13 +30,26 @@ def parse_commence_time(iso_str: str) -> datetime:
     return datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
 
 
-def in_monitor_window(now: datetime) -> bool:
+def in_monitor_window(
+    now: datetime,
+    base_hour: int | None = None,
+    base_minute: int | None = None,
+    end_hour: int | None = None,
+    end_minute: int | None = None,
+) -> bool:
     """
-    渡されたJST時刻が監視ウィンドウ(21:00〜23:59)の範囲内かどうか。
+    渡されたJST時刻が監視ウィンドウの範囲内かどうか。
+    引数を省略すると既定(MLB: 21:00〜23:59)を使う。スポーツ別の窓を判定するときは
+    base/end を渡す（サッカーは 20:00〜23:59 等）。
     """
+    base_hour = config.BASE_HOUR if base_hour is None else base_hour
+    base_minute = config.BASE_MINUTE if base_minute is None else base_minute
+    end_hour = config.END_HOUR if end_hour is None else end_hour
+    end_minute = config.END_MINUTE if end_minute is None else end_minute
+
     h, m = now.hour, now.minute
-    after_start = (h > config.BASE_HOUR) or (h == config.BASE_HOUR and m >= config.BASE_MINUTE)
-    before_end = (h < config.END_HOUR) or (h == config.END_HOUR and m <= config.END_MINUTE)
+    after_start = (h > base_hour) or (h == base_hour and m >= base_minute)
+    before_end = (h < end_hour) or (h == end_hour and m <= end_minute)
     return after_start and before_end
 
 

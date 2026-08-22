@@ -10,6 +10,7 @@ MLB Odds Research BOT のエントリーポイント。
     3. BOTを通知先のDiscordサーバ＆チャンネルに参加させておく
 """
 
+import os
 import socket
 import sys
 from pathlib import Path
@@ -55,5 +56,15 @@ from src.notifier.discord_bot import run  # noqa: E402
 
 if __name__ == "__main__":
     _acquire_single_instance_lock()  # 多重起動を防ぐ（先頭で確認）
-    init_db()  # DBの表がまだ無ければここで作る
+    init_db()  # DBの表がまだ無ければここで作る（paper_bets もここで作成される）
+
+    # 初回だけ環境変数 BACKFILL_PAPER_BETS=1 で過去ぶんの台帳を生成する。
+    # 冪等なので複数回でも安全だが、済んだら環境変数を外してよい。
+    if os.getenv("BACKFILL_PAPER_BETS") == "1":
+        try:
+            from src.monitor.paper_backfill import run_backfill
+            print("[backfill] " + run_backfill())
+        except Exception as e:
+            print(f"[backfill] エラー: {e}")
+
     run()

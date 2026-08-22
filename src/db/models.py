@@ -75,6 +75,39 @@ class GameResult(Base):
     final_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class PaperBet(Base):
+    """
+    ペーパートレード（仮想ベット）の台帳。
+
+    「判定時刻(MLB=23:30 / サッカー=24:00)に、基準(21:00/20:00)から 0.05以上
+    有利化(=価格が縮んだ)した Pinnacle ハンデ」に 1pt を基準倍率でBETしたと仮定し、
+    試合のカバー結果で決済する。1行 = 1ベット。
+    """
+
+    __tablename__ = "paper_bets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sport: Mapped[str] = mapped_column(String(50), index=True)
+    bet_date: Mapped[date] = mapped_column(Date, index=True)          # 基準を取ったJST日付
+    game_id: Mapped[str] = mapped_column(String(64), index=True)      # The Odds API の試合ID
+    game_name: Mapped[str] = mapped_column(String(120))               # "Away vs Home"
+    team: Mapped[str] = mapped_column(String(80))                     # BET対象チーム
+    point: Mapped[Decimal] = mapped_column(Numeric(4, 2))             # ハンデのライン(例 -1.5 / +0.25)
+    entry_odds: Mapped[Decimal] = mapped_column(Numeric(5, 2))        # 基準(エントリー)倍率
+    check_odds: Mapped[Decimal] = mapped_column(Numeric(5, 2))        # 判定時刻の価格
+    move: Mapped[Decimal] = mapped_column(Numeric(4, 2))             # check - entry(負=縮んだ)
+    commence_time: Mapped[datetime] = mapped_column(DateTime)         # 試合開始(UTC)
+
+    # --- 決済結果（未決済のうちは None） ---
+    settled: Mapped[bool] = mapped_column(Integer, default=0, index=True)  # 0/1
+    result: Mapped[str | None] = mapped_column(String(12), nullable=True)
+    # 'win' / 'lose' / 'push' / 'half_win' / 'half_lose'
+    pt: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)   # 損益(1pt基準)
+    home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    settled_time: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class Alert(Base):
     """通知を出した履歴。あとで「いつ何を知らせたか」を振り返るため。"""
 

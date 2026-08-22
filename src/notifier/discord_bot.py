@@ -22,9 +22,12 @@ from datetime import datetime, timezone, timedelta
 
 import discord
 
+from sqlalchemy import select
+
 from src import config
-from src.api.odds_api import get_games_with_handicap, get_events
+from src.api.odds_api import get_games_with_handicap, get_events, get_scores
 from src.db.database import get_session
+from src.db.models import PaperBet
 from src.monitor.base_odds import (
     create_base_odds_handicap,
     create_base_odds_for_game_handicap,
@@ -33,6 +36,12 @@ from src.monitor.base_odds import (
     load_base_odds_handicap,
 )
 from src.monitor.level_check import MonitorState, NotificationEvent, evaluate
+from src.monitor.paper_trade import (
+    record_paper_bets,
+    settle_paper_bets,
+    scores_lookup_from_oddsapi,
+    summary as paper_summary,
+)
 from src.monitor.snapshot import save_snapshot_handicap
 from src.utils.team_names import format_game_name_ja, to_ja
 from src.utils.time_utils import (
@@ -51,6 +60,7 @@ client = discord.Client(intents=intents)
 
 _startup_sent = False
 _monitor_task: asyncio.Task | None = None  # 稼働中の監視ループ。二重起動を防ぐ
+_paper_settled_date = None  # ペーパートレードを最後に決済・報告したJST日付（1日1回）
 
 # ループの基本間隔（秒）。各スポーツの「1分ごと判定」「5分ごと保存」は
 # この間隔で回しつつ、最終実行時刻との差で間引いて実現する。
@@ -169,6 +179,10 @@ class SportRuntime:
         self.label = sport_cfg["label"]
         self.emoji = sport_cfg.get("emoji", "⚾")
         self.window = sport_cfg["window"]
+        # 監視窓(スポーツ別)。MLB=21:00〜23:59 / サッカー6リーグ=20:00〜23:59。
+        self.base_hour, self.base_minute, self.end_hour, self.end_minute = (
+            config.sport_window(sport_cfg)
+        )
 
         self.state = MonitorState()
         self.base_odds_map: dict[tuple[str, str, str], float] = {}       # 基準価格(decimal)
@@ -179,6 +193,7 @@ class SportRuntime:
         # --- 固定時刻方式(MLB)用 ---
         self.last_base_date = None
         self.was_in_window = False
+        self.paper_recorded_date = None   # ペーパートレードを記録済みのJST日付
 
         # --- 試合ごと方式(NPB)用 ---
         self.cached_games: list[dict] = []          # 予定(get_events)のキャッシュ。窓判定に使う
@@ -198,6 +213,7 @@ class SportRuntime:
         self.last_base_date = None
         self.active_games = {}
         self.last_fetch_time = None
+        self.paper_recorded_date = None
 
 
 # =====================================================================
@@ -217,7 +233,83 @@ async def monitor_loop(channel: discord.abc.Messageable) -> None:
             except Exception as e:
                 print(f"[monitor_loop:{rt.sport_key}] エラー: {e}")
                 traceback.print_exc()
+
+        # 全スポーツ共通: ペーパートレードの決済＆日次レポート（1日1回）
+        try:
+            await _handle_paper_settlement(channel, now)
+        except Exception as e:
+            print(f"[monitor_loop:paper_settlement] エラー: {e}")
+            traceback.print_exc()
+
         await asyncio.sleep(TICK_SECONDS)
+
+
+# =====================================================================
+# ペーパートレード: 日次の決済＆レポート
+# =====================================================================
+async def _handle_paper_settlement(channel, now: datetime) -> None:
+    """
+    JST RESULT_FETCH_HOUR 以降に1日1回、未決済ベットを /scores で決済し、
+    本日ぶんと累計の損益を Discord に報告する。
+    """
+    global _paper_settled_date
+    if now.hour < config.RESULT_FETCH_HOUR:
+        return
+    if _paper_settled_date == now.date():
+        return
+
+    with get_session() as s:
+        # 未決済ベットが在るスポーツだけ /scores を叩く（クレジット節約）
+        sports = [
+            r[0] for r in s.execute(
+                select(PaperBet.sport).where(PaperBet.settled == 0).distinct()
+            ).all()
+        ]
+        if not sports:
+            _paper_settled_date = now.date()   # 何も無ければ静かに終了
+            return
+
+        total_settled = 0
+        for sp in sports:
+            lookup = scores_lookup_from_oddsapi(get_scores(sp))
+            total_settled += settle_paper_bets(s, lookup, sport=sp, settled_time=now)
+
+        s.flush()
+        report = _build_paper_report(s, now.date())
+
+    _paper_settled_date = now.date()
+    if total_settled or report:
+        await _send(channel, "📊ペーパートレード", report)
+
+
+def _build_paper_report(session, today_jst) -> str:
+    """本日ぶん＋累計の損益レポート文面を作る。"""
+    overall = paper_summary(session)
+    today = paper_summary(session, bet_date=today_jst)
+
+    def line(tag, x):
+        if x["bets"] == 0:
+            return f"{tag}: なし"
+        return (
+            f"{tag}: {x['total_pt']:+.2f}pt "
+            f"(勝{x['win']}/負{x['lose']}/分{x['push']}"
+            + (f"/半勝{x['half_win']}/半負{x['half_lose']}"
+               if (x['half_win'] or x['half_lose']) else "")
+            + f" 的中{x['hit_rate']}%)"
+        )
+
+    lines = ["📊 ペーパートレード結果", line("本日", today), line("累計", overall)]
+
+    # スポーツ別の累計（登録があるものだけ）
+    per = []
+    for s in config.SPORTS:
+        x = paper_summary(session, sport=s["sport_key"])
+        if x["bets"]:
+            per.append(f"　{s['label']}: {x['total_pt']:+.2f}pt ({x['bets']}件)")
+    if per:
+        lines.append("―― スポーツ別累計 ――")
+        lines.extend(per)
+    return "\n".join(lines)
 
 
 # =====================================================================
@@ -225,7 +317,9 @@ async def monitor_loop(channel: discord.abc.Messageable) -> None:
 # =====================================================================
 async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
     today = now.date()
-    currently_in = in_monitor_window(now)
+    currently_in = in_monitor_window(
+        now, rt.base_hour, rt.base_minute, rt.end_hour, rt.end_minute
+    )
 
     # --- 日付変更によるリセット ---
     if rt.last_base_date is not None and today != rt.last_base_date:
@@ -237,7 +331,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
         await _send(
             channel, rt.label,
             f"⏹ 監視終了 (JST {now.strftime('%H:%M')})\n"
-            f"翌日 {config.BASE_HOUR:02d}:{config.BASE_MINUTE:02d} に再開",
+            f"翌日 {rt.base_hour:02d}:{rt.base_minute:02d} に再開",
         )
     rt.was_in_window = currently_in
 
@@ -258,6 +352,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
     rt.last_check_time = now
 
     games = get_games_with_handicap(rt.sport_key)
+    paper_msg = None
     with get_session() as s:
         events = evaluate(
             s, games, rt.base_odds_map, rt.state,
@@ -268,8 +363,24 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
             rt.last_snapshot_time = now
             print(f"[{now}] {rt.sport_key} スナップショット保存: {saved}行")
 
+        # --- ペーパートレード記録（判定時刻を過ぎたら1日1回） ---
+        ch, cm = config.sport_check_time(rt.cfg)
+        if rt.paper_recorded_date != today and (now.hour, now.minute) >= (ch, cm):
+            n = record_paper_bets(
+                s, games, rt.base_odds_map, rt.base_points,
+                sport=rt.sport_key, bet_date=today, check_time=now,
+            )
+            rt.paper_recorded_date = today
+            if n:
+                paper_msg = (
+                    f"📝 ペーパートレード記録 (JST {now.strftime('%H:%M')})\n"
+                    f"有利化(縮み≥{config.LEVEL1})したハンデ {n}件を 1pt仮想BET として記録"
+                )
+
     for e in events:
         await _send(channel, rt.label, format_event(e, rt.emoji))
+    if paper_msg:
+        await _send(channel, rt.label, paper_msg)
 
 
 async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
@@ -288,7 +399,10 @@ async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
 
     with get_session() as s:
         if not has_base_odds_for_date(s, today, sport=rt.sport_key, market="spreads"):
-            saved = create_base_odds_handicap(s, games_for_base, today, sport=rt.sport_key)
+            saved = create_base_odds_handicap(
+                s, games_for_base, today, sport=rt.sport_key,
+                target_decimal=config.sport_target_odds(rt.cfg),
+            )
             base_created_now = True
             if saved == 0:
                 print(f"⚠️ [{rt.sport_key}] 試合はあるがハンデ(alternate_spreads)が0件。"
@@ -296,8 +410,8 @@ async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
             msg_base_saved = (
                 f"📌 基準オッズ保存完了 (JST {now.strftime('%H:%M')})\n"
                 f"対象: {rt.sport_key} / ハンデ1.9ライン / 24時間以内\n"
-                f"監視ウィンドウ: {config.BASE_HOUR:02d}:{config.BASE_MINUTE:02d}"
-                f" 〜 {config.END_HOUR:02d}:{config.END_MINUTE:02d}\n"
+                f"監視ウィンドウ: {rt.base_hour:02d}:{rt.base_minute:02d}"
+                f" 〜 {rt.end_hour:02d}:{rt.end_minute:02d}\n"
                 f"単体通知主軸: {config.PRIMARY_BOOKMAKER}\n"
                 f"Steam: 同方向{config.STEAM_MIN_BOOKS}ブック以上 / 2.1倍以下 / 閾値{config.STEAM_THRESHOLD}\n"
                 f"基準保存件数: {saved}"
@@ -316,8 +430,8 @@ async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
         await _send(channel, rt.label, msg_base_saved)
         await _send(
             channel, rt.label,
-            f"👀 監視開始 (JST {config.BASE_HOUR:02d}:{config.BASE_MINUTE:02d}〜"
-            f"{config.END_HOUR:02d}:{config.END_MINUTE:02d})",
+            f"👀 監視開始 (JST {rt.base_hour:02d}:{rt.base_minute:02d}〜"
+            f"{rt.end_hour:02d}:{rt.end_minute:02d})",
         )
     else:
         await _send(
@@ -454,7 +568,10 @@ async def _open_npb_game(channel, rt: SportRuntime, session, game: dict, lead: i
     existed = has_base_odds_for_game(session, gid, sport=rt.sport_key, market="spreads")
     saved = 0
     if not existed:
-        saved = create_base_odds_for_game_handicap(session, game, base_date, sport=rt.sport_key)
+        saved = create_base_odds_for_game_handicap(
+            session, game, base_date, sport=rt.sport_key,
+            target_decimal=config.sport_target_odds(rt.cfg),
+        )
         session.flush()
         if saved == 0:
             print(f"⚠️ [{rt.sport_key}] {game_name}: ハンデ(alternate_spreads)が0件。"
@@ -509,9 +626,9 @@ async def on_ready():
         sport_lines = []
         for s in config.SPORTS:
             if s["window"] == config.WINDOW_FIXED_CLOCK:
+                bh, bm, eh, em = config.sport_window(s)
                 sport_lines.append(
-                    f"・{s['label']}: 毎日 {config.BASE_HOUR:02d}:{config.BASE_MINUTE:02d}"
-                    f"〜{config.END_HOUR:02d}:{config.END_MINUTE:02d} 監視"
+                    f"・{s['label']}: 毎日 {bh:02d}:{bm:02d}〜{eh:02d}:{em:02d} 監視"
                 )
             else:
                 lead = s.get("lead_minutes", config.NPB_LEAD_MINUTES)
