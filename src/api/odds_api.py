@@ -5,6 +5,8 @@ The Odds API の窓口。
 通信エラー時は空リストを返し、上の階層を止めない（既存BOTの挙動を踏襲）。
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 
 from src import config
@@ -12,6 +14,9 @@ from src.utils.time_utils import parse_commence_time, is_within_24h
 
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
+
+# 試合ごとのハンデ取得を並列で叩く同時実行数。直列だと試合数ぶん待つため遅延の主因。
+HANDICAP_FETCH_WORKERS = 8
 
 
 def get_current_games(
@@ -124,10 +129,38 @@ def get_scores(sport_key: str | None = None, days_from: int = 3) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
+def _fetch_one_event_handicap(sport, eid, reg, markets):
+    """1試合ぶんの alternate_spreads を取得。(data, remaining) を返す。失敗時 data=None。"""
+    url = f"{ODDS_API_BASE}/sports/{sport}/events/{eid}/odds/"
+    params = {
+        "apiKey": config.ODDS_API_KEY,
+        "regions": reg,
+        "markets": markets,
+        "oddsFormat": config.ODDS_FORMAT,
+    }
+    try:
+        r = requests.get(url, params=params, timeout=15)
+    except Exception as e:
+        print(f"[odds_api] handicap 通信エラー ({eid}): {e}")
+        return None, None
+    remaining = r.headers.get("x-requests-remaining")
+    if r.status_code != 200:
+        print(f"[odds_api] handicap APIエラー {r.status_code}: {r.text[:150]}")
+        return None, remaining
+    try:
+        data = r.json()
+    except Exception:
+        return None, remaining
+    if isinstance(data, dict) and data.get("bookmakers"):
+        return data, remaining
+    return None, remaining
+
+
 def get_games_with_handicap(
     sport_key: str | None = None,
     regions: str | None = None,
     markets: str = "alternate_spreads",
+    max_workers: int = HANDICAP_FETCH_WORKERS,
 ) -> list[dict]:
     """
     24時間以内に始まる各試合について、ハンデの全ライン（階段）を取得する。
@@ -135,6 +168,9 @@ def get_games_with_handicap(
     一括の /odds では主要ライン1本しか返らないため、試合ごとの専用エンドポイント
     (/events/{id}/odds) を markets=alternate_spreads で叩いて全ハンデを取る。
     各 events/{id}/odds 呼び出しは [地域数] クレジットを消費する。
+
+    試合数が多いと直列取得では1周に数分かかり通知が遅れるため、
+    ここでは最大 max_workers 本まで**並列**で取得する（取得順は不定だが結果は同じ）。
 
     返り値:
         get_current_games と同じ形（試合 dict の list）。各 dict の bookmakers→
@@ -144,50 +180,38 @@ def get_games_with_handicap(
     sport = sport_key or config.SPORT_KEY
     reg = regions or config.ODDS_REGIONS
 
-    events = get_events(sport)
-    games: list[dict] = []
-    last_remaining = None
-    fetched = 0
-
-    for ev in events:
+    # 24時間以内の試合IDだけ集める
+    event_ids: list[str] = []
+    for ev in get_events(sport):
         commence_str = ev.get("commence_time")
-        if not commence_str:
+        eid = ev.get("id")
+        if not commence_str or not eid:
             continue
         try:
             commence = parse_commence_time(commence_str)
         except Exception:
             continue
-        if not is_within_24h(commence):
-            continue  # 監視対象（24時間以内）の試合だけ階段を取りに行く
+        if is_within_24h(commence):
+            event_ids.append(eid)
 
-        eid = ev.get("id")
-        if not eid:
-            continue
-        url = f"{ODDS_API_BASE}/sports/{sport}/events/{eid}/odds/"
-        params = {
-            "apiKey": config.ODDS_API_KEY,
-            "regions": reg,
-            "markets": markets,
-            "oddsFormat": config.ODDS_FORMAT,
-        }
-        try:
-            r = requests.get(url, params=params, timeout=15)
-        except Exception as e:
-            print(f"[odds_api] handicap 通信エラー ({eid}): {e}")
-            continue
+    if not event_ids:
+        return []
 
-        last_remaining = r.headers.get("x-requests-remaining") or last_remaining
-        if r.status_code != 200:
-            print(f"[odds_api] handicap APIエラー {r.status_code}: {r.text[:150]}")
-            continue
-        try:
-            data = r.json()
-        except Exception:
-            continue
-        if isinstance(data, dict) and data.get("bookmakers"):
-            games.append(data)
-            fetched += 1
+    games: list[dict] = []
+    last_remaining = None
+    workers = max(1, min(max_workers, len(event_ids)))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [
+            ex.submit(_fetch_one_event_handicap, sport, eid, reg, markets)
+            for eid in event_ids
+        ]
+        for fut in as_completed(futures):
+            data, remaining = fut.result()
+            if remaining is not None:
+                last_remaining = remaining
+            if data:
+                games.append(data)
 
     if last_remaining is not None:
-        print(f"[odds_api] handicap {fetched}試合取得 / 残り: {last_remaining}")
+        print(f"[odds_api] handicap {len(games)}試合取得(並列{workers}) / 残り: {last_remaining}")
     return games

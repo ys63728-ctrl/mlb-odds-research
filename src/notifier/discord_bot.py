@@ -351,7 +351,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
         return
     rt.last_check_time = now
 
-    games = get_games_with_handicap(rt.sport_key)
+    games = await asyncio.to_thread(get_games_with_handicap, rt.sport_key)
     paper_msg = None
     with get_session() as s:
         events = evaluate(
@@ -385,7 +385,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
 
 async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
     """今日の基準オッズ(ハンデ1.9ライン)をDBに作る(または再起動時に復元する)。"""
-    games_for_base = get_games_with_handicap(rt.sport_key)
+    games_for_base = await asyncio.to_thread(get_games_with_handicap, rt.sport_key)
 
     # API取得が空（ネット瞬断・DNS失敗など）の場合は、今日を「準備済み」にしない。
     # ここで確定させてしまうと空の基準で監視が始まり、Level通知も出ず、やり直しも
@@ -528,7 +528,7 @@ async def _handle_pregame(channel, rt: SportRuntime, now: datetime) -> None:
         return
     rt.last_fetch_time = now
 
-    games = get_games_with_handicap(rt.sport_key)
+    games = await asyncio.to_thread(get_games_with_handicap, rt.sport_key)
     if not games:
         return
     active_now, _ = _pregame_active_and_imminent(games, now_utc_dt, lead, cutoff)
