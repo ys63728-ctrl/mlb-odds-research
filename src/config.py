@@ -56,7 +56,7 @@ WINDOW_PREGAME = "pregame"
 NPB_LEAD_MINUTES = 90    # 試合開始の何分前から監視を始めるか（=基準を取る時点）
 NPB_CUTOFF_MINUTES = 5   # 試合開始の何分前で監視を打ち切るか
 
-# サッカー6大リーグの監視窓・ペーパートレード設定（JST）
+# サッカー欧州リーグの監視窓・ペーパートレード設定（JST）
 #   MLBは 21:00基準〜23:59監視・23:30判定。サッカーは 20:00基準〜24:00監視・24:00判定。
 #   24:00丁度は日付が変わるため、監視・判定とも実質 23:59（最終スナップ）で扱う。
 SOCCER_BASE_HOUR = 20
@@ -67,14 +67,13 @@ SOCCER_CHECK_HOUR = 23      # ペーパートレード判定時刻（≒24:00）
 SOCCER_CHECK_MINUTE = 59
 SOCCER_TARGET_ODDS = 1.94  # アジアンハンデ基準ライン＝価格がこの値に最も近い point
 
-# 追加する欧州6リーグ (The Odds API の sport_key, 表示ラベル)
+# 追加する欧州リーグ (The Odds API の sport_key, 表示ラベル)
 _SOCCER_LEAGUES = [
     ("soccer_spain_la_liga",         "⚽ラリーガ"),
     ("soccer_epl",                   "⚽プレミア"),
     ("soccer_italy_serie_a",         "⚽セリエA"),
     ("soccer_france_ligue_one",      "⚽リーグアン"),
     ("soccer_germany_bundesliga",    "⚽ブンデス"),
-    ("soccer_netherlands_eredivisie","⚽エールディビジ"),
 ]
 
 SPORTS = [
@@ -101,7 +100,7 @@ SPORTS = [
         "window": WINDOW_FIXED_CLOCK,
     },
 ] + [
-    # 欧州6リーグ。すべて固定時刻方式・20:00基準〜24:00監視・24:00判定・基準1.94。
+    # 欧州リーグ。すべて固定時刻方式・20:00基準〜24:00監視・24:00判定・基準1.94。
     {
         "sport_key": key,
         "label": label,
