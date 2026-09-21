@@ -219,20 +219,27 @@ class SportRuntime:
 # =====================================================================
 # 監視ループ（全スポーツを1つのループで回す）
 # =====================================================================
+async def _run_one_sport(channel, rt: "SportRuntime", now: datetime) -> None:
+    """1スポーツ分のハンドラを実行（例外はここで握りつぶしてループを止めない）。"""
+    try:
+        if rt.window == config.WINDOW_FIXED_CLOCK:
+            await _handle_fixed_clock(channel, rt, now)
+        elif rt.window == config.WINDOW_PREGAME:
+            await _handle_pregame(channel, rt, now)
+    except Exception as e:
+        print(f"[monitor_loop:{rt.sport_key}] エラー: {e}")
+        traceback.print_exc()
+
+
 async def monitor_loop(channel: discord.abc.Messageable) -> None:
     runtimes = [SportRuntime(s) for s in config.SPORTS]
 
     while not client.is_closed():
         now = now_jst()
-        for rt in runtimes:
-            try:
-                if rt.window == config.WINDOW_FIXED_CLOCK:
-                    await _handle_fixed_clock(channel, rt, now)
-                elif rt.window == config.WINDOW_PREGAME:
-                    await _handle_pregame(channel, rt, now)
-            except Exception as e:
-                print(f"[monitor_loop:{rt.sport_key}] エラー: {e}")
-                traceback.print_exc()
+        # 全スポーツを「同時並行」で処理する。以前は for で直列に await していたため、
+        # 後ろのスポーツ(サッカー/NPB)が前(MLB等)の取得完了を待って遅延していた。
+        # gather で各スポーツを独立に走らせ、遅延をスポーツ間で切り離す。
+        await asyncio.gather(*(_run_one_sport(channel, rt, now) for rt in runtimes))
 
         # 全スポーツ共通: ペーパートレードの決済＆日次レポート（1日1回）
         try:
