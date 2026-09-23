@@ -91,6 +91,7 @@ SPORTS = [
         "window": WINDOW_PREGAME,
         "lead_minutes": NPB_LEAD_MINUTES,
         "cutoff_minutes": NPB_CUTOFF_MINUTES,
+        "h2h_watch": True,   # ハンデに加え1×2(勝敗オッズ)の人気側も監視
     },
     {
         # サッカーW杯。MLBと同じ固定時刻方式（21:00基準〜23:59まで監視）。
@@ -99,6 +100,7 @@ SPORTS = [
         "label": "⚽W杯",
         "emoji": "⚽",
         "window": WINDOW_FIXED_CLOCK,
+        "h2h_watch": True,
     },
 ] + [
     # 欧州リーグ。すべて固定時刻方式・20:00基準〜24:00監視・24:00判定・基準1.94。
@@ -114,6 +116,7 @@ SPORTS = [
         "check_hour": SOCCER_CHECK_HOUR,
         "check_minute": SOCCER_CHECK_MINUTE,
         "target_odds": SOCCER_TARGET_ODDS,
+        "h2h_watch": True,   # ハンデに加え1×2(勝敗オッズ)の人気側も監視
     }
     for key, label in _SOCCER_LEAGUES
 ]
@@ -164,6 +167,11 @@ def sport_check_time(cfg: dict) -> tuple[int, int]:
 def sport_target_odds(cfg: dict) -> float:
     """スポーツ設定から基準ラインのターゲットオッズを返す。"""
     return cfg.get("target_odds", TARGET_ODDS_DEFAULT)
+
+
+def sport_h2h_watch(cfg: dict) -> bool:
+    """このスポーツで1×2(勝敗オッズ)の人気側も監視するか。既定は False(MLB等)。"""
+    return cfg.get("h2h_watch", False)
 
 # 試合結果を取得する時刻（JST）。MLBの試合がほぼ終わる頃
 RESULT_FETCH_HOUR = 14

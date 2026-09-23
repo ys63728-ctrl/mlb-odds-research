@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from src import config
 from src.db.models import BaseOdds
-from src.utils.odds_utils import american_to_decimal, pick_balanced_line
+from src.utils.odds_utils import american_to_decimal, pick_balanced_line, pick_h2h_favorite
 from src.utils.time_utils import parse_commence_time, is_within_24h, now_utc
 
 
@@ -301,6 +301,91 @@ def load_base_odds_handicap(
             "odds": float(row.base_odds_decimal),
         }
     return result
+
+
+# =====================================================================
+# 1×2(h2h) 方式: Pinnacleの「人気側(オッズ最小)」だけを基準にする
+# =====================================================================
+def _save_one_game_h2h_favorite(session: Session, game: dict, base_date: date, sport: str) -> int:
+    """1試合について、Pinnacleのh2h(1×2)の人気側(オッズ最小・引分除く)を1行保存する
+    (market='h2h', point=None)。Returns: 追加行数(0か1)。"""
+    if not isinstance(game, dict):
+        return 0
+    commence_str = game.get("commence_time")
+    if not commence_str:
+        return 0
+    try:
+        commence = parse_commence_time(commence_str)
+    except Exception:
+        return 0
+    game_id = game.get("id") or ""
+    away = game.get("away_team", "")
+    home = game.get("home_team", "")
+    game_name = f"{away} vs {home}"
+
+    for bookmaker in game.get("bookmakers", []) or []:
+        if not isinstance(bookmaker, dict) or bookmaker.get("title") != config.PRIMARY_BOOKMAKER:
+            continue
+        outcomes: list[dict] = []
+        for market in bookmaker.get("markets", []) or []:
+            if market.get("key") == "h2h":
+                outcomes.extend(market.get("outcomes", []) or [])
+        fav = pick_h2h_favorite(outcomes)
+        if not fav:
+            return 0
+        session.add(BaseOdds(
+            sport=sport, base_date=base_date, game_id=game_id, game_name=game_name,
+            bookmaker=config.PRIMARY_BOOKMAKER, market="h2h", team=fav["team"],
+            base_odds_decimal=Decimal(str(fav["odds_decimal"])),
+            commence_time=commence.replace(tzinfo=None), point=None,
+        ))
+        return 1
+    return 0
+
+
+def create_h2h_favorite_base(
+    session: Session, games: list[dict], base_date: date, *, sport: str | None = None
+) -> int:
+    """24時間以内の全試合について、Pinnacleの1×2人気側の基準を保存する(固定時刻方式)。"""
+    sport = sport or config.SPORT_KEY
+    saved = 0
+    for game in games:
+        if not isinstance(game, dict):
+            continue
+        commence_str = game.get("commence_time")
+        if not commence_str:
+            continue
+        try:
+            if not is_within_24h(parse_commence_time(commence_str)):
+                continue
+        except Exception:
+            continue
+        saved += _save_one_game_h2h_favorite(session, game, base_date, sport)
+    return saved
+
+
+def create_h2h_favorite_base_for_game(
+    session: Session, game: dict, base_date: date, *, sport: str | None = None
+) -> int:
+    """1試合が窓に入った瞬間に、その試合の1×2人気側の基準を保存する(試合ごと方式)。"""
+    sport = sport or config.SPORT_KEY
+    return _save_one_game_h2h_favorite(session, game, base_date, sport)
+
+
+def load_h2h_base_map(
+    session: Session, base_date: date, *, sport: str | None = None
+) -> dict[tuple[str, str, str], float]:
+    """指定日・スポーツの1×2人気側基準を (game_id, bookmaker, team) -> decimal で返す。"""
+    sport = sport or config.SPORT_KEY
+    stmt = select(BaseOdds).where(
+        BaseOdds.base_date == base_date,
+        BaseOdds.sport == sport,
+        BaseOdds.market == "h2h",
+    )
+    return {
+        (row.game_id, row.bookmaker, row.team): float(row.base_odds_decimal)
+        for row in session.execute(stmt).scalars()
+    }
 
 
 def load_base_odds_map(

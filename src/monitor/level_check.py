@@ -44,6 +44,7 @@ class NotificationEvent:
     kind: str               # 'pinnacle_level' | 'pinnacle_clear' | 'steam_move' | 'steam_clear'
     game_name: str
     team: str
+    note: str = ""          # 通知先頭に付ける補足ラベル（例 "1×2"）。空なら何も付けない。
     # --- Pinnacle 単体通知 ---
     level: int = 0
     bookmaker: str | None = None

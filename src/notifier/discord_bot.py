@@ -25,15 +25,17 @@ import discord
 from sqlalchemy import select
 
 from src import config
-from src.api.odds_api import get_games_with_handicap, get_events, get_scores
+from src.api.odds_api import get_games_with_handicap, get_events, get_scores, get_current_games
 from src.db.database import get_session
 from src.db.models import PaperBet
 from src.monitor.base_odds import (
     create_base_odds_handicap,
     create_base_odds_for_game_handicap,
+    create_h2h_favorite_base_for_game,
     has_base_odds_for_date,
     has_base_odds_for_game,
     load_base_odds_handicap,
+    load_h2h_base_map,
 )
 from src.monitor.level_check import MonitorState, NotificationEvent, evaluate
 from src.monitor.paper_trade import (
@@ -96,8 +98,9 @@ def format_pinnacle_level(e: NotificationEvent, emoji: str = "⚾") -> str:
         7: "🚨 LEVEL7",
     }.get(e.level, "LEVEL?")
     direction = "📈 オッズ上昇" if (e.move or 0) > 0 else "📉 オッズ低下"
+    tag = f"【{e.note}】 " if e.note else ""
     return (
-        f"{badge}\n"
+        f"{tag}{badge}\n"
         f"{emoji} {format_game_name_ja(e.game_name)}\n"
         f"🎯 {to_ja(e.team)}{_point_str(e.point)}\n"
         f"📚 {e.bookmaker}\n\n"
@@ -109,8 +112,9 @@ def format_pinnacle_level(e: NotificationEvent, emoji: str = "⚾") -> str:
 
 
 def format_pinnacle_clear(e: NotificationEvent, emoji: str = "⚾") -> str:
+    tag = f"【{e.note}】 " if e.note else ""
     return (
-        f"⚪ LEVEL解除\n"
+        f"{tag}⚪ LEVEL解除\n"
         f"{emoji} {format_game_name_ja(e.game_name)}\n"
         f"🎯 {to_ja(e.team)}{_point_str(e.point)}\n"
         f"📚 {e.bookmaker}\n\n"
@@ -167,6 +171,45 @@ async def _send(channel, label: str, text: str) -> None:
         print(f"[discord] 通知送信エラー: {send_err}")
 
 
+async def _run_h2h_watch(channel, rt: "SportRuntime", now: datetime, allowed_gids=None) -> None:
+    """
+    1×2(勝敗オッズ)の「人気側(オッズ最小)」を監視する（NPB・サッカーのみ）。
+    ハンデ監視とは別トラッキング。基準が未保存の試合は初回に人気側基準を作る（冪等）。
+    人気側が基準から Level1(0.05)以上動いたら「1×2」ラベル付きで通知する。
+    allowed_gids を渡すと、その試合IDだけを対象にする（NPBの窓内試合に限定）。
+    """
+    if not config.sport_h2h_watch(rt.cfg):
+        return
+    base_date = now.date()
+    h2h_games = await asyncio.to_thread(get_current_games, rt.sport_key, None, "h2h")
+    if allowed_gids is not None:
+        h2h_games = [g for g in h2h_games if g.get("id") in allowed_gids]
+    if not h2h_games:
+        return
+
+    events = []
+    with get_session() as s:
+        # 基準がまだ無い試合だけ、人気側の基準を保存（冪等: game_id×market='h2h'で判定）
+        for g in h2h_games:
+            gid = g.get("id")
+            if not gid:
+                continue
+            if not has_base_odds_for_game(s, gid, sport=rt.sport_key, market="h2h"):
+                create_h2h_favorite_base_for_game(s, g, base_date, sport=rt.sport_key)
+        s.flush()
+        rt.h2h_base_map = load_h2h_base_map(s, base_date, sport=rt.sport_key)
+        if rt.h2h_base_map:
+            events = evaluate(
+                s, h2h_games, rt.h2h_base_map, rt.h2h_state,
+                alert_time=now, sport=rt.sport_key, base_points=None,
+            )
+
+    for e in events:
+        if e.kind in ("pinnacle_level", "pinnacle_clear"):
+            e.note = "1×2"
+            await _send(channel, rt.label, format_event(e, rt.emoji))
+
+
 # =====================================================================
 # スポーツごとの実行時状態
 # =====================================================================
@@ -189,6 +232,10 @@ class SportRuntime:
         self.base_points: dict[tuple[str, str, str], float] = {}         # 基準のハンデ点
         self.last_check_time: datetime | None = None
         self.last_snapshot_time: datetime | None = None
+
+        # --- 1×2(h2h) 人気側 監視用（NPB・サッカーのみ）---
+        self.h2h_state = MonitorState()
+        self.h2h_base_map: dict[tuple[str, str, str], float] = {}
 
         # --- 固定時刻方式(MLB)用 ---
         self.last_base_date = None
@@ -214,6 +261,8 @@ class SportRuntime:
         self.active_games = {}
         self.last_fetch_time = None
         self.paper_recorded_date = None
+        self.h2h_state = MonitorState()
+        self.h2h_base_map = {}
 
 
 # =====================================================================
@@ -389,6 +438,9 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
     if paper_msg:
         await _send(channel, rt.label, paper_msg)
 
+    # 1×2(勝敗オッズ)人気側の監視（サッカーのみ。MLBは h2h_watch=False で即return）
+    await _run_h2h_watch(channel, rt, now)
+
 
 async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
     """今日の基準オッズ(ハンデ1.9ライン)をDBに作る(または再起動時に復元する)。"""
@@ -561,6 +613,12 @@ async def _handle_pregame(channel, rt: SportRuntime, now: datetime) -> None:
 
     for e in events:
         await _send(channel, rt.label, format_event(e, rt.emoji))
+
+    # 1×2(勝敗オッズ)人気側の監視（窓内の試合だけに限定）
+    await _run_h2h_watch(
+        channel, rt, now,
+        allowed_gids={g.get("id") for g in active_now if g.get("id")},
+    )
 
 
 async def _open_npb_game(channel, rt: SportRuntime, session, game: dict, lead: int) -> None:

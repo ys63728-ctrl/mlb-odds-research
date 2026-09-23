@@ -55,6 +55,30 @@ def pick_balanced_line(
     return best
 
 
+def pick_h2h_favorite(outcomes: list[dict]) -> dict | None:
+    """
+    1ブックの h2h(1×2) outcomes から「人気側＝オッズが最小のチーム」を選ぶ。
+    引き分け(Draw)は除外する（"勝ちのオッズ"を対象にするため）。
+
+    Args:
+        outcomes: [{"name": チーム/Draw, "price": アメリカンオッズ}, ...]
+    Returns:
+        {"team": str, "odds_decimal": float} / 該当なしは None
+    """
+    best: dict | None = None
+    for o in outcomes:
+        name = o.get("name")
+        price = o.get("price")
+        if name is None or price is None:
+            continue
+        if str(name).strip().lower() == "draw":
+            continue
+        dec = american_to_decimal(price)
+        if best is None or dec < best["odds_decimal"]:
+            best = {"team": name, "odds_decimal": dec}
+    return best
+
+
 def decimal_to_american(decimal: float) -> int:
     """
     デシマル形式のオッズをアメリカン形式に変換する。
