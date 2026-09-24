@@ -75,6 +75,7 @@ _SOCCER_LEAGUES = [
     ("soccer_france_ligue_one",      "⚽リーグアン"),
     ("soccer_germany_bundesliga",    "⚽ブンデス"),
     ("soccer_uefa_champs_league",    "⚽CL"),
+    ("soccer_uefa_nations_league",   "⚽ネーションズ"),
 ]
 
 SPORTS = [
