@@ -8,6 +8,7 @@ from src.utils.time_utils import (
     in_monitor_window,
     in_pregame_window,
     is_within_24h,
+    window_session_date,
 )
 
 
@@ -31,13 +32,40 @@ def test_in_monitor_window_at_2359_jst_is_true():
 
 
 def test_in_monitor_window_at_2059_jst_is_false():
-    # 20:59は監視外
+    # 20:59は監視外（既定窓 21:00〜翌01:00 の開始前）
     assert in_monitor_window(_jst(2026, 5, 28, 20, 59)) is False
 
 
-def test_in_monitor_window_at_0000_jst_is_false():
-    # 0:00 も監視外
-    assert in_monitor_window(_jst(2026, 5, 29, 0, 0)) is False
+def test_in_monitor_window_midnight_tail_is_true():
+    # 既定窓は21:00〜翌01:00の日跨ぎ。0:00・0:30・1:00は監視内
+    assert in_monitor_window(_jst(2026, 5, 29, 0, 0)) is True
+    assert in_monitor_window(_jst(2026, 5, 29, 0, 30)) is True
+    assert in_monitor_window(_jst(2026, 5, 29, 1, 0)) is True
+
+
+def test_in_monitor_window_after_end_is_false():
+    # 1:01は監視外（翌01:00で終了）
+    assert in_monitor_window(_jst(2026, 5, 29, 1, 1)) is False
+    # 昼(12:00)も当然監視外
+    assert in_monitor_window(_jst(2026, 5, 29, 12, 0)) is False
+
+
+def test_in_monitor_window_same_day_window_still_works():
+    # またがない窓(20:00〜23:59)も従来どおり
+    assert in_monitor_window(_jst(2026, 5, 28, 20, 0), 20, 0, 23, 59) is True
+    assert in_monitor_window(_jst(2026, 5, 28, 19, 59), 20, 0, 23, 59) is False
+
+
+def test_window_session_date_wraps_to_start_day():
+    # 窓 21:00〜翌01:00。翌日0:30は「前日」が基準日
+    assert window_session_date(_jst(2026, 5, 29, 0, 30), 21, 0, 1, 0) == \
+        datetime(2026, 5, 28).date()
+    # 前半(22:00)は当日
+    assert window_session_date(_jst(2026, 5, 28, 22, 0), 21, 0, 1, 0) == \
+        datetime(2026, 5, 28).date()
+    # 窓の外(12:00)は当日
+    assert window_session_date(_jst(2026, 5, 29, 12, 0), 21, 0, 1, 0) == \
+        datetime(2026, 5, 29).date()
 
 
 def test_is_within_24h_true_for_game_in_12h():

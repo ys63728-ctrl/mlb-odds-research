@@ -51,6 +51,7 @@ from src.utils.time_utils import (
     in_pregame_window,
     now_jst,
     parse_commence_time,
+    window_session_date,
 )
 
 
@@ -372,7 +373,11 @@ def _build_paper_report(session, today_jst) -> str:
 # 固定時刻方式(MLB)のハンドラ
 # =====================================================================
 async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
-    today = now.date()
+    # 日跨ぎ窓(例 21:00〜翌01:00)では、深夜0時以降も「窓が始まった日」を today とする。
+    # これで0時をまたいでも基準(21:00取得)を作り直さずに使い続ける。
+    today = window_session_date(
+        now, rt.base_hour, rt.base_minute, rt.end_hour, rt.end_minute
+    )
     currently_in = in_monitor_window(
         now, rt.base_hour, rt.base_minute, rt.end_hour, rt.end_minute
     )

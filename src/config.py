@@ -57,12 +57,12 @@ NPB_LEAD_MINUTES = 90    # 試合開始の何分前から監視を始めるか�
 NPB_CUTOFF_MINUTES = 5   # 試合開始の何分前で監視を打ち切るか
 
 # サッカー欧州リーグの監視窓・ペーパートレード設定（JST）
-#   MLBは 21:00基準〜23:59監視・23:30判定。サッカーは 20:00基準〜24:00監視・24:00判定。
-#   24:00丁度は日付が変わるため、監視・判定とも実質 23:59（最終スナップ）で扱う。
+#   MLBは 21:00基準〜翌01:00監視。サッカーは 20:00基準〜翌01:00監視（日付をまたぐ）。
+#   ペーパートレード判定は従来どおり ≒24:00（実質23:59の最終スナップ）で扱う。
 SOCCER_BASE_HOUR = 20
 SOCCER_BASE_MINUTE = 0
-SOCCER_END_HOUR = 23
-SOCCER_END_MINUTE = 59
+SOCCER_END_HOUR = 1        # 翌01:00まで監視（日付またぎ）
+SOCCER_END_MINUTE = 0
 SOCCER_CHECK_HOUR = 23      # ペーパートレード判定時刻（≒24:00）
 SOCCER_CHECK_MINUTE = 59
 SOCCER_TARGET_ODDS = 1.94  # アジアンハンデ基準ライン＝価格がこの値に最も近い point
@@ -135,11 +135,11 @@ ODDS_FORMAT = "american"       # オッズ形式
 # =====================================================================
 JST = timezone(timedelta(hours=9))
 
-# 監視ウィンドウ既定(MLB): JST 21:00 〜 23:59
+# 監視ウィンドウ既定(MLB): JST 21:00 〜 翌01:00（日付をまたぐ）
 BASE_HOUR = 21
 BASE_MINUTE = 0
-END_HOUR = 23
-END_MINUTE = 59
+END_HOUR = 1
+END_MINUTE = 0
 
 # ペーパートレード判定時刻の既定(MLB): JST 23:30
 CHECK_HOUR = 23

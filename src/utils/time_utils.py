@@ -47,10 +47,37 @@ def in_monitor_window(
     end_hour = config.END_HOUR if end_hour is None else end_hour
     end_minute = config.END_MINUTE if end_minute is None else end_minute
 
-    h, m = now.hour, now.minute
-    after_start = (h > base_hour) or (h == base_hour and m >= base_minute)
-    before_end = (h < end_hour) or (h == end_hour and m <= end_minute)
-    return after_start and before_end
+    start = base_hour * 60 + base_minute
+    end = end_hour * 60 + end_minute
+    cur = now.hour * 60 + now.minute
+    if start <= end:
+        # 同日内で完結する窓（例 21:00〜23:59）
+        return start <= cur <= end
+    # 日付をまたぐ窓（例 21:00〜翌01:00）。開始以降 or 終了以前なら窓内。
+    return cur >= start or cur <= end
+
+
+def window_session_date(
+    now: datetime,
+    base_hour: int,
+    base_minute: int,
+    end_hour: int,
+    end_minute: int,
+):
+    """
+    日付をまたぐ監視窓で、「今の窓が始まった日付(=基準を取った日)」を返す。
+
+    例: 窓 21:00〜翌01:00 のとき、翌日 00:30 に呼ぶと『前日の日付』を返す。
+    これにより、深夜0時をまたいでも基準(21:00に取得)を作り直さずに使い続けられる。
+    またがない窓や、窓の前半（開始〜23:59）では now.date() をそのまま返す。
+    """
+    start = base_hour * 60 + base_minute
+    end = end_hour * 60 + end_minute
+    cur = now.hour * 60 + now.minute
+    if start > end and cur <= end:
+        # 日跨ぎ窓の「翌日側(0:00〜終了時刻)」にいる → 窓の開始は前日
+        return (now - timedelta(days=1)).date()
+    return now.date()
 
 
 def in_pregame_window(
