@@ -48,9 +48,82 @@ MLB_TEAM_NAMES_JA: dict[str, str] = {
 }
 
 
+# サッカー。The Odds API が返す英語表記をキーにする（完全一致でないと変換されない）。
+# クラブ(5大リーグ+CL等)＋代表(ネーションズリーグ/W杯)。未登録は英語のまま。
+SOCCER_TEAM_NAMES_JA: dict[str, str] = {
+    # --- プレミアリーグ / 英 ---
+    "Arsenal": "アーセナル", "Aston Villa": "アストン・ヴィラ", "Bournemouth": "ボーンマス",
+    "Brentford": "ブレントフォード", "Brighton and Hove Albion": "ブライトン",
+    "Chelsea": "チェルシー", "Crystal Palace": "クリスタル・パレス", "Everton": "エバートン",
+    "Fulham": "フラム", "Liverpool": "リバプール", "Manchester City": "マンチェスター・シティ",
+    "Manchester United": "マンチェスター・ユナイテッド", "Newcastle United": "ニューカッスル",
+    "Nottingham Forest": "ノッティンガム・フォレスト", "Tottenham Hotspur": "トッテナム",
+    "Leeds United": "リーズ", "Sunderland": "サンダーランド", "Hull City": "ハル・シティ",
+    "Coventry City": "コベントリー", "Ipswich Town": "イプスウィッチ",
+    # --- ラ・リーガ / 西 ---
+    "Barcelona": "バルセロナ", "Real Madrid": "レアル・マドリード",
+    "Atlético Madrid": "アトレティコ・マドリード", "Athletic Bilbao": "アスレティック・ビルバオ",
+    "Real Sociedad": "レアル・ソシエダ", "Real Betis": "ベティス", "Sevilla": "セビージャ",
+    "Valencia": "バレンシア", "Villarreal": "ビジャレアル", "Celta Vigo": "セルタ",
+    "Getafe": "ヘタフェ", "Espanyol": "エスパニョール", "Alavés": "アラベス",
+    "Rayo Vallecano": "ラージョ・バジェカーノ", "CA Osasuna": "オサスナ", "Levante": "レバンテ",
+    "Elche CF": "エルチェ", "Málaga": "マラガ", "Deportivo La Coruña": "デポルティボ",
+    "Real Racing Club de Santander": "ラシン・サンタンデール",
+    # --- セリエA / 伊 ---
+    "AC Milan": "ミラン", "Inter Milan": "インテル", "Juventus": "ユベントス",
+    "Napoli": "ナポリ", "AS Roma": "ローマ", "Lazio": "ラツィオ",
+    "Atalanta BC": "アタランタ", "Fiorentina": "フィオレンティーナ", "Bologna": "ボローニャ",
+    "Torino": "トリノ", "Udinese": "ウディネーゼ", "Genoa": "ジェノア", "Cagliari": "カリアリ",
+    "Lecce": "レッチェ", "Sassuolo": "サッスオーロ", "Parma": "パルマ", "Como": "コモ",
+    "Monza": "モンツァ", "Venezia": "ベネチア", "Frosinone": "フロジノーネ",
+    # --- ブンデスリーガ / 独 ---
+    "Bayern Munich": "バイエルン", "Borussia Dortmund": "ドルトムント",
+    "RB Leipzig": "ライプツィヒ", "Bayer Leverkusen": "レバークーゼン",
+    "Eintracht Frankfurt": "フランクフルト", "VfB Stuttgart": "シュツットガルト",
+    "Borussia Monchengladbach": "ボルシアMG", "Union Berlin": "ウニオン・ベルリン",
+    "SC Freiburg": "フライブルク", "TSG Hoffenheim": "ホッフェンハイム",
+    "FSV Mainz 05": "マインツ", "Werder Bremen": "ブレーメン", "Augsburg": "アウクスブルク",
+    "1. FC Köln": "ケルン", "FC Schalke 04": "シャルケ", "Hamburger SV": "ハンブルガーSV",
+    "SC Paderborn": "パーダーボルン", "Elversberg": "エルファースベルク",
+    # --- リーグアン / 仏 ---
+    "Paris Saint Germain": "パリSG", "Marseille": "マルセイユ", "AS Monaco": "モナコ",
+    "Lyon": "リヨン", "Lille": "リール", "Nice": "ニース", "RC Lens": "ランス",
+    "Rennes": "レンヌ", "Strasbourg": "ストラスブール", "Toulouse": "トゥールーズ",
+    "Brest": "ブレスト", "Auxerre": "オセール", "Angers": "アンジェ", "Lorient": "ロリアン",
+    "Le Havre": "ル・アーブル", "Paris FC": "パリFC", "Le Mans FC": "ル・マン", "Troyes": "トロワ",
+    # --- CL/その他クラブ ---
+    "Porto": "ポルト", "Sporting Lisbon": "スポルティング", "Club Brugge": "ブルージュ",
+    "PSV Eindhoven": "PSVアイントホーフェン", "Feyenoord": "フェイエノールト",
+    "Galatasaray": "ガラタサライ", "Fenerbahce": "フェネルバフチェ",
+    "Shakhtar Donetsk": "シャフタール", "Slavia Praha": "スラビア・プラハ",
+    "Bodø/Glimt": "ボドー・グリムト", "Viking FK": "バイキング", "AEK Athens": "AEKアテネ",
+    "LASK": "LASK", "Sabah FK": "サバフ", "ŠK Slovan Bratislava": "スロバン",
+    # --- 代表（ネーションズリーグ / W杯） ---
+    "England": "イングランド", "Germany": "ドイツ", "France": "フランス", "Spain": "スペイン",
+    "Italy": "イタリア", "Portugal": "ポルトガル", "Netherlands": "オランダ", "Belgium": "ベルギー",
+    "Croatia": "クロアチア", "Serbia": "セルビア", "Poland": "ポーランド", "Switzerland": "スイス",
+    "Austria": "オーストリア", "Denmark": "デンマーク", "Norway": "ノルウェー",
+    "Sweden": "スウェーデン", "Scotland": "スコットランド", "Wales": "ウェールズ",
+    "Turkey": "トルコ", "Ukraine": "ウクライナ", "Czech Republic": "チェコ",
+    "Hungary": "ハンガリー", "Greece": "ギリシャ", "Romania": "ルーマニア",
+    "Republic of Ireland": "アイルランド", "Iceland": "アイスランド", "Finland": "フィンランド",
+    "Israel": "イスラエル", "Slovenia": "スロベニア", "Slovakia": "スロバキア",
+    "Albania": "アルバニア", "Bosnia and Herzegovina": "ボスニア",
+    "North Macedonia": "北マケドニア", "Montenegro": "モンテネグロ", "Georgia": "ジョージア",
+    "Armenia": "アルメニア", "Azerbaijan": "アゼルバイジャン", "Malta": "マルタ",
+    "Andorra": "アンドラ", "Luxembourg": "ルクセンブルク", "Kosovo": "コソボ",
+    "Cyprus": "キプロス", "Estonia": "エストニア", "Latvia": "ラトビア",
+    "Lithuania": "リトアニア", "Moldova": "モルドバ", "Bulgaria": "ブルガリア",
+    "Kazakhstan": "カザフスタン", "Faroe Islands": "フェロー諸島", "Gibraltar": "ジブラルタル",
+    "Liechtenstein": "リヒテンシュタイン", "San Marino": "サンマリノ",
+}
+
+
 def to_ja(team_name: str) -> str:
-    """チーム名を日本語に。未登録なら英語のまま返す。"""
-    return MLB_TEAM_NAMES_JA.get(team_name, team_name)
+    """チーム名を日本語に。MLB→サッカーの順で探し、未登録なら英語のまま返す。"""
+    if team_name in MLB_TEAM_NAMES_JA:
+        return MLB_TEAM_NAMES_JA[team_name]
+    return SOCCER_TEAM_NAMES_JA.get(team_name, team_name)
 
 
 def format_game_name_ja(game_name: str) -> str:

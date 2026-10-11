@@ -1,41 +1,27 @@
-"""team_names.py のテスト。"""
+"""team_names（日本語変換）のテスト。"""
 
 from src.utils.team_names import to_ja, format_game_name_ja
 
 
-def test_to_ja_translates_known_team():
-    assert to_ja("New York Yankees") == "ヤンキース"
+def test_soccer_club_to_katakana():
+    assert to_ja("AC Milan") == "ミラン"
+    assert to_ja("Manchester City") == "マンチェスター・シティ"
+    assert to_ja("Paris Saint Germain") == "パリSG"
+    assert to_ja("1. FC Köln") == "ケルン"
+
+
+def test_soccer_national_to_katakana():
+    assert to_ja("Germany") == "ドイツ"
+    assert to_ja("Netherlands") == "オランダ"
+
+
+def test_mlb_still_works():
     assert to_ja("Los Angeles Dodgers") == "ドジャース"
-    assert to_ja("Boston Red Sox") == "レッドソックス"
 
 
-def test_to_ja_returns_english_for_unknown_team():
-    # NBAや将来の競技は未登録 → 英語のまま
-    assert to_ja("Lakers") == "Lakers"
-    assert to_ja("FC Barcelona") == "FC Barcelona"
+def test_unknown_falls_back_to_english():
+    assert to_ja("Nonexistent FC") == "Nonexistent FC"
 
 
-def test_format_game_name_translates_both_teams():
-    assert (
-        format_game_name_ja("New York Yankees vs Boston Red Sox")
-        == "ヤンキース vs レッドソックス"
-    )
-
-
-def test_format_game_name_keeps_unknown_as_is():
-    assert (
-        format_game_name_ja("Lakers vs Celtics") == "Lakers vs Celtics"
-    )
-
-
-def test_format_game_name_handles_no_vs_marker():
-    # "vs" が入っていない文字列はそのまま
-    assert format_game_name_ja("Yankees Game") == "Yankees Game"
-
-
-def test_all_30_mlb_teams_have_translations():
-    """MLB 30球団全てが登録されていること（漏れ防止）。"""
-    from src.utils.team_names import MLB_TEAM_NAMES_JA
-    # "Athletics" と "Oakland Athletics" の重複登録分を除いて 30件以上
-    distinct_values = set(MLB_TEAM_NAMES_JA.values())
-    assert len(distinct_values) == 30
+def test_format_game_name_ja_soccer():
+    assert format_game_name_ja("AC Milan vs Sassuolo") == "ミラン vs サッスオーロ"

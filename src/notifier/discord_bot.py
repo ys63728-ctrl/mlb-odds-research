@@ -333,14 +333,14 @@ def _format_handicap_report(event: dict, commence_jst: datetime, zero_line: list
     """Pinnacleの0ハンデを速報文面にする。0ラインが無ければ None。"""
     if not zero_line:
         return None
-    away = event.get("away_team", "")
-    home = event.get("home_team", "")
+    away = to_ja(event.get("away_team", ""))
+    home = to_ja(event.get("home_team", ""))
     lines = [
         f"📊 ピナクル ハンデ速報（0ライン / 開始{slot}分前）",
         f"🕙 {commence_jst.strftime('%H:%M')}開始  {away} vs {home}",
     ]
     for team, _point, dec in zero_line:
-        lines.append(f"・{team} {dec:.2f}")
+        lines.append(f"・{to_ja(team)} {dec:.2f}")
     return "\n".join(lines)
 
 
