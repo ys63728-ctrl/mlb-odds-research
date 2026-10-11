@@ -44,6 +44,11 @@ from src.monitor.paper_trade import (
     scores_lookup_from_oddsapi,
     summary as paper_summary,
 )
+from src.monitor.handicap_report import (
+    kickoff_in_window,
+    pick_due_slot,
+    extract_pinnacle_spread,
+)
 from src.monitor.snapshot import save_snapshot_handicap
 from src.utils.team_names import format_game_name_ja, to_ja
 from src.utils.time_utils import (
@@ -64,6 +69,8 @@ client = discord.Client(intents=intents)
 _startup_sent = False
 _monitor_task: asyncio.Task | None = None  # 稼働中の監視ループ。二重起動を防ぐ
 _paper_settled_date = None  # ペーパートレードを最後に決済・報告したJST日付（1日1回）
+_report_events_cache: dict = {}   # sport_key -> (events, last_fetch_jst) ハンデ速報の予定キャッシュ
+_report_fired: dict = {}          # game_id -> {"slots": set, "commence": utc} 発火済みスロット
 
 # ループの基本間隔（秒）。各スポーツの「1分ごと判定」「5分ごと保存」は
 # この間隔で回しつつ、最終実行時刻との差で間引いて実現する。
@@ -298,7 +305,103 @@ async def monitor_loop(channel: discord.abc.Messageable) -> None:
             print(f"[monitor_loop:paper_settlement] エラー: {e}")
             traceback.print_exc()
 
+        # サッカー: 開始が近い試合のハンデ速報（開始30〜5分前に計6回）
+        try:
+            await _handle_handicap_report(channel, now)
+        except Exception as e:
+            print(f"[monitor_loop:handicap_report] エラー: {e}")
+            traceback.print_exc()
+
         await asyncio.sleep(TICK_SECONDS)
+
+
+# =====================================================================
+# ハンデ速報（サッカー）: 開始30〜5分前に Pinnacleハンデ倍率を計6回通知
+# =====================================================================
+def _format_handicap_report(event: dict, commence_jst: datetime, game: dict, slot: int) -> str | None:
+    """Pinnacleのメインハンデを速報文面にする。Pinnacleのハンデが無ければ None。"""
+    spreads = extract_pinnacle_spread(game) if game else []
+    if not spreads:
+        return None
+    away = event.get("away_team", "")
+    home = event.get("home_team", "")
+    lines = [
+        f"📊 ピナクル ハンデ速報（開始{slot}分前）",
+        f"🕙 {commence_jst.strftime('%H:%M')}開始  {away} vs {home}",
+    ]
+    for team, point, dec in spreads:
+        pt = "0" if point in (0, 0.0, None) else f"{point:+g}"
+        lines.append(f"・{team} [{pt}] {dec:.2f}")
+    return "\n".join(lines)
+
+
+async def _handle_handicap_report(channel, now: datetime) -> None:
+    """
+    対応サッカー全大会で、JST 20:00〜翌1:30 に始まる試合について、
+    開始30〜5分前に5分おき（計6回）Pinnacleのハンデ倍率を速報する。
+    予定(get_events,無料)で発火タイミングを判定し、発火する試合があるときだけ
+    spreads(有料,一括/odds)を取得して送信直前の新鮮なオッズを届ける。
+    """
+    now_utc = now.astimezone(timezone.utc)
+
+    for s in config.SPORTS:
+        if not s["sport_key"].startswith("soccer_"):
+            continue
+        sport = s["sport_key"]
+
+        # 予定を15分おきに更新（無料）
+        evs, last = _report_events_cache.get(sport, (None, None))
+        if last is None or (now - last).total_seconds() >= config.HANDICAP_REPORT_EVENTS_REFRESH_SECONDS:
+            fetched = await asyncio.to_thread(get_events, sport)
+            if fetched:
+                evs = fetched
+            _report_events_cache[sport] = (evs or [], now)
+        if not evs:
+            continue
+
+        # 発火すべき試合を集める
+        due = []  # (event, commence_jst, fire_slot, marks)
+        for e in evs:
+            cs = e.get("commence_time")
+            gid = e.get("id")
+            if not cs or not gid:
+                continue
+            try:
+                commence = parse_commence_time(cs)
+            except Exception:
+                continue
+            commence_jst = commence.astimezone(config.JST)
+            if not kickoff_in_window(commence_jst):
+                continue
+            minutes_before = (commence - now_utc).total_seconds() / 60
+            fired = _report_fired.get(gid, {}).get("slots", set())
+            fire, marks = pick_due_slot(minutes_before, fired)
+            if fire is not None:
+                due.append((e, commence_jst, fire, marks))
+
+        if not due:
+            continue
+
+        # 発火する試合があるときだけ spreads を取得（送信直前＝新鮮）
+        games = await asyncio.to_thread(get_current_games, sport, None, "spreads")
+        gmap = {g.get("id"): g for g in games if isinstance(g, dict)}
+
+        for e, commence_jst, fire, marks in due:
+            msg = _format_handicap_report(e, commence_jst, gmap.get(e["id"]), fire)
+            if not msg:
+                continue   # Pinnacleのハンデがまだ無い → 済みにせず次tickで再試行
+            await _send(channel, s["label"], msg)
+            rec = _report_fired.setdefault(e["id"], {"slots": set(), "commence": None})
+            rec["slots"].update(marks)
+            rec["commence"] = parse_commence_time(e["commence_time"])
+
+    # 終了済み(キックオフ1時間超過)の試合の発火記録を掃除
+    stale = [
+        gid for gid, rec in _report_fired.items()
+        if rec.get("commence") and (now_utc - rec["commence"]).total_seconds() > 3600
+    ]
+    for gid in stale:
+        _report_fired.pop(gid, None)
 
 
 # =====================================================================

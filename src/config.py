@@ -174,6 +174,17 @@ def sport_h2h_watch(cfg: dict) -> bool:
     """このスポーツで1×2(勝敗オッズ)の人気側も監視するか。既定は False(MLB等)。"""
     return cfg.get("h2h_watch", False)
 
+
+# =====================================================================
+# ハンデ速報（サッカー）: 開始が近い試合のPinnacleハンデ倍率を定期通知
+#   対象: JST 20:00〜翌1:30 に始まるサッカー全大会の試合
+#   タイミング: 開始30分前〜5分前に5分おき＝計6回。送信直前に取得(新鮮)。
+# =====================================================================
+HANDICAP_REPORT_SLOTS = [30, 25, 20, 15, 10, 5]   # 試合開始の何分前に通知するか
+HANDICAP_REPORT_KICKOFF_START = (20, 0)           # 対象キックオフ開始 JST 20:00
+HANDICAP_REPORT_KICKOFF_END = (1, 30)             # 対象キックオフ終了 JST 翌1:30
+HANDICAP_REPORT_EVENTS_REFRESH_SECONDS = 900      # 予定(get_events,無料)の更新間隔(15分)
+
 # 試合結果を取得する時刻（JST）。MLBの試合がほぼ終わる頃
 RESULT_FETCH_HOUR = 14
 
