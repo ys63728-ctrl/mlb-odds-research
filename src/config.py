@@ -23,6 +23,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 # =====================================================================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID") or 0)
+# ハンデ速報(サッカー5分刻み)を送る専用チャンネル。未設定(0)なら通常チャンネルに送る。
+HANDICAP_REPORT_CHANNEL_ID = int(os.getenv("HANDICAP_REPORT_CHANNEL_ID") or 0)
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/odds_research.db")
 

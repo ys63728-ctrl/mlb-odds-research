@@ -4,7 +4,7 @@ from datetime import datetime
 
 from src import config
 from src.monitor.handicap_report import (
-    kickoff_in_window, pick_due_slot, extract_pinnacle_spread,
+    kickoff_in_window, pick_due_slot, extract_pinnacle_zero_line,
 )
 
 
@@ -64,18 +64,30 @@ def test_slot_late_guard():
     assert fire is None
 
 
-# ---------- Pinnacleハンデ抽出 ----------
-def test_extract_pinnacle_spread():
-    game = {"bookmakers": [{"title": "Pinnacle", "markets": [{"key": "spreads", "outcomes": [
-        {"name": "Crystal Palace", "point": 0, "price": 114},   # 2.14
-        {"name": "Nottingham Forest", "point": 0, "price": -123},  # 1.81
+# ---------- Pinnacle 0ハンデ抽出 ----------
+def test_extract_zero_line_picks_only_point_zero():
+    # alternate_spreads に 0以外のラインも混在 → 0だけ拾う
+    game = {"bookmakers": [{"title": "Pinnacle", "markets": [{"key": "alternate_spreads", "outcomes": [
+        {"name": "Crystal Palace", "point": -0.5, "price": 150},
+        {"name": "Crystal Palace", "point": 0, "price": 114},        # 2.14 ← これ
+        {"name": "Nottingham Forest", "point": 0, "price": -123},    # 1.81 ← これ
+        {"name": "Nottingham Forest", "point": 0.5, "price": -200},
     ]}]}]}
-    out = extract_pinnacle_spread(game)
-    teams = {t: (p, d) for t, p, d in out}
-    assert teams["Crystal Palace"] == (0, 2.14)
-    assert teams["Nottingham Forest"][1] == 1.81
+    out = extract_pinnacle_zero_line(game)
+    teams = {t: d for t, p, d in out}
+    assert teams == {"Crystal Palace": 2.14, "Nottingham Forest": 1.81}
 
 
-def test_extract_returns_empty_without_pinnacle():
-    game = {"bookmakers": [{"title": "DraftKings", "markets": [{"key": "spreads", "outcomes": []}]}]}
-    assert extract_pinnacle_spread(game) == []
+def test_extract_zero_line_empty_when_no_zero():
+    game = {"bookmakers": [{"title": "Pinnacle", "markets": [{"key": "alternate_spreads", "outcomes": [
+        {"name": "A", "point": -1.0, "price": 100},
+        {"name": "B", "point": 1.0, "price": -120},
+    ]}]}]}
+    assert extract_pinnacle_zero_line(game) == []
+
+
+def test_extract_zero_line_empty_without_pinnacle():
+    game = {"bookmakers": [{"title": "DraftKings", "markets": [{"key": "alternate_spreads", "outcomes": [
+        {"name": "A", "point": 0, "price": 100},
+    ]}]}]}
+    assert extract_pinnacle_zero_line(game) == []

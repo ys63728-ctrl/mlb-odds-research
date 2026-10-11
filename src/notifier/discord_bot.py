@@ -44,10 +44,11 @@ from src.monitor.paper_trade import (
     scores_lookup_from_oddsapi,
     summary as paper_summary,
 )
+from src.api.odds_api import _fetch_one_event_handicap
 from src.monitor.handicap_report import (
     kickoff_in_window,
     pick_due_slot,
-    extract_pinnacle_spread,
+    extract_pinnacle_zero_line,
 )
 from src.monitor.snapshot import save_snapshot_handicap
 from src.utils.team_names import format_game_name_ja, to_ja
@@ -318,20 +319,28 @@ async def monitor_loop(channel: discord.abc.Messageable) -> None:
 # =====================================================================
 # ハンデ速報（サッカー）: 開始30〜5分前に Pinnacleハンデ倍率を計6回通知
 # =====================================================================
-def _format_handicap_report(event: dict, commence_jst: datetime, game: dict, slot: int) -> str | None:
-    """Pinnacleのメインハンデを速報文面にする。Pinnacleのハンデが無ければ None。"""
-    spreads = extract_pinnacle_spread(game) if game else []
-    if not spreads:
+def _report_channel(default_channel):
+    """ハンデ速報の送信先。HANDICAP_REPORT_CHANNEL_ID があればそのチャンネル、無ければ通常。"""
+    cid = config.HANDICAP_REPORT_CHANNEL_ID
+    if cid:
+        ch = client.get_channel(cid)
+        if ch is not None:
+            return ch
+    return default_channel
+
+
+def _format_handicap_report(event: dict, commence_jst: datetime, zero_line: list, slot: int) -> str | None:
+    """Pinnacleの0ハンデを速報文面にする。0ラインが無ければ None。"""
+    if not zero_line:
         return None
     away = event.get("away_team", "")
     home = event.get("home_team", "")
     lines = [
-        f"📊 ピナクル ハンデ速報（開始{slot}分前）",
+        f"📊 ピナクル ハンデ速報（0ライン / 開始{slot}分前）",
         f"🕙 {commence_jst.strftime('%H:%M')}開始  {away} vs {home}",
     ]
-    for team, point, dec in spreads:
-        pt = "0" if point in (0, 0.0, None) else f"{point:+g}"
-        lines.append(f"・{team} [{pt}] {dec:.2f}")
+    for team, _point, dec in zero_line:
+        lines.append(f"・{team} {dec:.2f}")
     return "\n".join(lines)
 
 
@@ -382,15 +391,17 @@ async def _handle_handicap_report(channel, now: datetime) -> None:
         if not due:
             continue
 
-        # 発火する試合があるときだけ spreads を取得（送信直前＝新鮮）
-        games = await asyncio.to_thread(get_current_games, sport, None, "spreads")
-        gmap = {g.get("id"): g for g in games if isinstance(g, dict)}
-
+        # 発火する試合だけ、その試合の alternate_spreads を取得（送信直前＝新鮮）して0ライン抽出
+        report_ch = _report_channel(channel)
         for e, commence_jst, fire, marks in due:
-            msg = _format_handicap_report(e, commence_jst, gmap.get(e["id"]), fire)
+            data, _ = await asyncio.to_thread(
+                _fetch_one_event_handicap, sport, e["id"], config.ODDS_REGIONS, "alternate_spreads"
+            )
+            zero_line = extract_pinnacle_zero_line(data) if data else []
+            msg = _format_handicap_report(e, commence_jst, zero_line, fire)
             if not msg:
-                continue   # Pinnacleのハンデがまだ無い → 済みにせず次tickで再試行
-            await _send(channel, s["label"], msg)
+                continue   # Pinnacleの0ラインがまだ無い → 済みにせず次tickで再試行
+            await _send(report_ch, s["label"], msg)
             rec = _report_fired.setdefault(e["id"], {"slots": set(), "commence": None})
             rec["slots"].update(marks)
             rec["commence"] = parse_commence_time(e["commence_time"])

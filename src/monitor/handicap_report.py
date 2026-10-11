@@ -59,26 +59,31 @@ def pick_due_slot(
     return min(due), due
 
 
-def extract_pinnacle_spread(game: dict, book: str = config.PRIMARY_BOOKMAKER):
+def extract_pinnacle_zero_line(game: dict, book: str = config.PRIMARY_BOOKMAKER):
     """
-    bulk /odds(markets='spreads') の game から、Pinnacleのメインハンデを
-    [(team, point, decimal), ...] で返す。無ければ空リスト。
+    /events/{id}/odds(markets='alternate_spreads') の game から、Pinnacle の
+    「0ハンデ(point==0)」の両チーム価格を [(team, 0.0, decimal), ...] で返す。
+    0ラインが無ければ空リスト。
     """
     if not isinstance(game, dict):
         return []
     for b in game.get("bookmakers", []) or []:
         if not isinstance(b, dict) or b.get("title") != book:
             continue
+        out = []
         for m in b.get("markets", []) or []:
-            if m.get("key") != "spreads":
+            if m.get("key") != "alternate_spreads":
                 continue
-            out = []
             for o in m.get("outcomes", []) or []:
                 name = o.get("name")
                 point = o.get("point")
                 price = o.get("price")
-                if name is None or price is None:
+                if name is None or price is None or point is None:
                     continue
-                out.append((name, point, american_to_decimal(price)))
-            return out
+                try:
+                    if abs(float(point)) < 1e-9:   # point == 0
+                        out.append((name, 0.0, american_to_decimal(price)))
+                except (TypeError, ValueError):
+                    continue
+        return out
     return []
