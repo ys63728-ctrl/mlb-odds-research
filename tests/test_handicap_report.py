@@ -16,13 +16,14 @@ def _jst(h, m=0):
 def test_kickoff_window_includes_evening_and_after_midnight():
     assert kickoff_in_window(_jst(20, 0)) is True
     assert kickoff_in_window(_jst(22, 0)) is True
-    assert kickoff_in_window(_jst(1, 30)) is True      # 境界(翌1:30)
+    assert kickoff_in_window(_jst(1, 30)) is True
+    assert kickoff_in_window(_jst(2, 0)) is True        # 境界(翌2:00)
     assert kickoff_in_window(datetime(2026, 10, 12, 0, 30, tzinfo=config.JST)) is True
 
 
 def test_kickoff_window_excludes_out_of_range():
     assert kickoff_in_window(_jst(19, 59)) is False
-    assert kickoff_in_window(_jst(1, 31)) is False     # 1:30超
+    assert kickoff_in_window(_jst(2, 1)) is False       # 2:00超
     assert kickoff_in_window(_jst(12, 0)) is False
 
 
