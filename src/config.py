@@ -88,6 +88,13 @@ SPORTS = [
         "window": WINDOW_FIXED_CLOCK,
     },
     {
+        # NBA。MLBと同じ固定時刻方式（21:00基準〜翌01:00監視・ハンデ1.9ライン・Level1〜7）。
+        "sport_key": "basketball_nba",
+        "label": "🏀NBA",
+        "emoji": "🏀",
+        "window": WINDOW_FIXED_CLOCK,
+    },
+    {
         "sport_key": "baseball_npb",
         "label": "⚾NPB",
         "emoji": "⚾",
