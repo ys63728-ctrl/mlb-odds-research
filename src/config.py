@@ -59,9 +59,9 @@ NPB_LEAD_MINUTES = 90    # 試合開始の何分前から監視を始めるか�
 NPB_CUTOFF_MINUTES = 5   # 試合開始の何分前で監視を打ち切るか
 
 # サッカー欧州リーグの監視窓・ペーパートレード設定（JST）
-#   MLB/NBA/サッカーとも 21:00基準〜翌03:00監視（日付をまたぐ）。
+#   サッカーは 20:00基準〜翌03:00監視（MLB/NBAは21:00基準）。日付をまたぐ。
 #   ペーパートレード判定は従来どおり ≒24:00（実質23:59の最終スナップ）で扱う。
-SOCCER_BASE_HOUR = 21
+SOCCER_BASE_HOUR = 20
 SOCCER_BASE_MINUTE = 0
 SOCCER_END_HOUR = 3        # 翌03:00まで監視（日付またぎ）
 SOCCER_END_MINUTE = 0
