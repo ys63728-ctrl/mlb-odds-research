@@ -37,15 +37,16 @@ def test_in_monitor_window_at_2059_jst_is_false():
 
 
 def test_in_monitor_window_midnight_tail_is_true():
-    # 既定窓は21:00〜翌01:00の日跨ぎ。0:00・0:30・1:00は監視内
+    # 既定窓は21:00〜翌03:00の日跨ぎ。0:00〜3:00は監視内
     assert in_monitor_window(_jst(2026, 5, 29, 0, 0)) is True
-    assert in_monitor_window(_jst(2026, 5, 29, 0, 30)) is True
     assert in_monitor_window(_jst(2026, 5, 29, 1, 0)) is True
+    assert in_monitor_window(_jst(2026, 5, 29, 2, 30)) is True
+    assert in_monitor_window(_jst(2026, 5, 29, 3, 0)) is True
 
 
 def test_in_monitor_window_after_end_is_false():
-    # 1:01は監視外（翌01:00で終了）
-    assert in_monitor_window(_jst(2026, 5, 29, 1, 1)) is False
+    # 3:01は監視外（翌03:00で終了）
+    assert in_monitor_window(_jst(2026, 5, 29, 3, 1)) is False
     # 昼(12:00)も当然監視外
     assert in_monitor_window(_jst(2026, 5, 29, 12, 0)) is False
 
