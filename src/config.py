@@ -25,6 +25,8 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID") or 0)
 # ハンデ速報(サッカー5分刻み)を送る専用チャンネル。未設定(0)なら通常チャンネルに送る。
 HANDICAP_REPORT_CHANNEL_ID = int(os.getenv("HANDICAP_REPORT_CHANNEL_ID") or 0)
+# NBAの通知だけ送る専用チャンネル(env NBA_CHANNEL_ID で上書き可)。
+NBA_CHANNEL_ID = int(os.getenv("NBA_CHANNEL_ID") or 1563959257463001088)
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/odds_research.db")
 
@@ -182,6 +184,17 @@ def sport_target_odds(cfg: dict) -> float:
 def sport_h2h_watch(cfg: dict) -> bool:
     """このスポーツで1×2(勝敗オッズ)の人気側も監視するか。既定は False(MLB等)。"""
     return cfg.get("h2h_watch", False)
+
+
+# スポーツ別の専用通知チャンネル。0 の場合は通常チャンネル(CHANNEL_ID)へ。
+_SPORT_CHANNEL_IDS = {
+    "basketball_nba": NBA_CHANNEL_ID,
+}
+
+
+def sport_channel_id(sport_key: str) -> int:
+    """このスポーツの通知を送る専用チャンネルID。無ければ0(通常チャンネル)。"""
+    return _SPORT_CHANNEL_IDS.get(sport_key, 0)
 
 
 # =====================================================================

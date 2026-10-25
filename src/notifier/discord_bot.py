@@ -329,6 +329,16 @@ def _report_channel(default_channel):
     return default_channel
 
 
+def _sport_channel(sport_key: str, default_channel):
+    """スポーツ別の専用チャンネル。設定が無ければ通常チャンネルへ（NBA等だけ分ける）。"""
+    cid = config.sport_channel_id(sport_key)
+    if cid:
+        ch = client.get_channel(cid)
+        if ch is not None:
+            return ch
+    return default_channel
+
+
 def _format_handicap_report(event: dict, commence_jst: datetime, zero_line: list, slot: int) -> str | None:
     """Pinnacleの0ハンデを速報文面にする。0ラインが無ければ None。"""
     if not zero_line:
@@ -495,6 +505,8 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
     currently_in = in_monitor_window(
         now, rt.base_hour, rt.base_minute, rt.end_hour, rt.end_minute
     )
+    # このスポーツの通知先（NBA等は専用チャンネル、他は通常チャンネル）
+    send_ch = _sport_channel(rt.sport_key, channel)
 
     # --- 日付変更によるリセット ---
     if rt.last_base_date is not None and today != rt.last_base_date:
@@ -504,7 +516,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
     # --- ウィンドウから抜けた瞬間の通知 ---
     if rt.was_in_window and not currently_in:
         await _send(
-            channel, rt.label,
+            send_ch, rt.label,
             f"⏹ 監視終了 (JST {now.strftime('%H:%M')})\n"
             f"翌日 {rt.base_hour:02d}:{rt.base_minute:02d} に再開",
         )
@@ -515,7 +527,7 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
 
     # --- 今日の基準がまだロードされていなければ準備 ---
     if rt.last_base_date != today:
-        await _prepare_today_base(channel, rt, today, now)
+        await _prepare_today_base(send_ch, rt, today, now)
         return
 
     # --- 1分ごとの判定（間引き） ---
@@ -553,12 +565,12 @@ async def _handle_fixed_clock(channel, rt: SportRuntime, now: datetime) -> None:
                 )
 
     for e in events:
-        await _send(channel, rt.label, format_event(e, rt.emoji))
+        await _send(send_ch, rt.label, format_event(e, rt.emoji))
     if paper_msg:
-        await _send(channel, rt.label, paper_msg)
+        await _send(send_ch, rt.label, paper_msg)
 
     # 1×2(勝敗オッズ)人気側の監視（サッカーのみ。MLBは h2h_watch=False で即return）
-    await _run_h2h_watch(channel, rt, now)
+    await _run_h2h_watch(send_ch, rt, now)
 
 
 async def _prepare_today_base(channel, rt: SportRuntime, today, now) -> None:
