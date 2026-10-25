@@ -19,6 +19,12 @@ def test_mlb_still_works():
     assert to_ja("Los Angeles Dodgers") == "ドジャース"
 
 
+def test_nba_to_katakana():
+    assert to_ja("Oklahoma City Thunder") == "サンダー"
+    assert to_ja("Los Angeles Lakers") == "レイカーズ"
+    assert to_ja("Philadelphia 76ers") == "シクサーズ"
+
+
 def test_unknown_falls_back_to_english():
     assert to_ja("Nonexistent FC") == "Nonexistent FC"
 

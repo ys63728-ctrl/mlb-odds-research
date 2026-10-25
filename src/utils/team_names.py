@@ -119,11 +119,48 @@ SOCCER_TEAM_NAMES_JA: dict[str, str] = {
 }
 
 
+# NBA 30球団。The Odds API が返す英語表記をキーにする。
+NBA_TEAM_NAMES_JA: dict[str, str] = {
+    "Atlanta Hawks": "ホークス",
+    "Boston Celtics": "セルティックス",
+    "Brooklyn Nets": "ネッツ",
+    "Charlotte Hornets": "ホーネッツ",
+    "Chicago Bulls": "ブルズ",
+    "Cleveland Cavaliers": "キャバリアーズ",
+    "Dallas Mavericks": "マーベリックス",
+    "Denver Nuggets": "ナゲッツ",
+    "Detroit Pistons": "ピストンズ",
+    "Golden State Warriors": "ウォリアーズ",
+    "Houston Rockets": "ロケッツ",
+    "Indiana Pacers": "ペイサーズ",
+    "Los Angeles Clippers": "クリッパーズ",
+    "Los Angeles Lakers": "レイカーズ",
+    "Memphis Grizzlies": "グリズリーズ",
+    "Miami Heat": "ヒート",
+    "Milwaukee Bucks": "バックス",
+    "Minnesota Timberwolves": "ティンバーウルブズ",
+    "New Orleans Pelicans": "ペリカンズ",
+    "New York Knicks": "ニックス",
+    "Oklahoma City Thunder": "サンダー",
+    "Orlando Magic": "マジック",
+    "Philadelphia 76ers": "シクサーズ",
+    "Phoenix Suns": "サンズ",
+    "Portland Trail Blazers": "トレイルブレイザーズ",
+    "Sacramento Kings": "キングス",
+    "San Antonio Spurs": "スパーズ",
+    "Toronto Raptors": "ラプターズ",
+    "Utah Jazz": "ジャズ",
+    "Washington Wizards": "ウィザーズ",
+}
+
+
 def to_ja(team_name: str) -> str:
-    """チーム名を日本語に。MLB→サッカーの順で探し、未登録なら英語のまま返す。"""
+    """チーム名を日本語に。MLB→サッカー→NBAの順で探し、未登録なら英語のまま返す。"""
     if team_name in MLB_TEAM_NAMES_JA:
         return MLB_TEAM_NAMES_JA[team_name]
-    return SOCCER_TEAM_NAMES_JA.get(team_name, team_name)
+    if team_name in SOCCER_TEAM_NAMES_JA:
+        return SOCCER_TEAM_NAMES_JA[team_name]
+    return NBA_TEAM_NAMES_JA.get(team_name, team_name)
 
 
 def format_game_name_ja(game_name: str) -> str:
